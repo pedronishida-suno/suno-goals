@@ -2,18 +2,6 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
 export async function middleware(request: NextRequest) {
-  // 🚧 DESENVOLVIMENTO: Autenticação desabilitada
-  // TODO: Habilitar autenticação em produção
-  
-  // Permite acesso direto ao backoffice sem autenticação
-  if (process.env.NODE_ENV === 'development') {
-    return NextResponse.next();
-  }
-
-  // ========================================
-  // PRODUÇÃO: Código de autenticação abaixo
-  // ========================================
-  
   let response = NextResponse.next({
     request: {
       headers: request.headers,
@@ -29,38 +17,14 @@ export async function middleware(request: NextRequest) {
           return request.cookies.get(name)?.value;
         },
         set(name: string, value: string, options: CookieOptions) {
-          request.cookies.set({
-            name,
-            value,
-            ...options,
-          });
-          response = NextResponse.next({
-            request: {
-              headers: request.headers,
-            },
-          });
-          response.cookies.set({
-            name,
-            value,
-            ...options,
-          });
+          request.cookies.set({ name, value, ...options });
+          response = NextResponse.next({ request: { headers: request.headers } });
+          response.cookies.set({ name, value, ...options });
         },
         remove(name: string, options: CookieOptions) {
-          request.cookies.set({
-            name,
-            value: '',
-            ...options,
-          });
-          response = NextResponse.next({
-            request: {
-              headers: request.headers,
-            },
-          });
-          response.cookies.set({
-            name,
-            value: '',
-            ...options,
-          });
+          request.cookies.set({ name, value: '', ...options });
+          response = NextResponse.next({ request: { headers: request.headers } });
+          response.cookies.set({ name, value: '', ...options });
         },
       },
     }
@@ -69,22 +33,45 @@ export async function middleware(request: NextRequest) {
   // Refresh session if expired
   const { data: { user } } = await supabase.auth.getUser();
 
-  // Protect /admin routes
-  if (request.nextUrl.pathname.startsWith('/admin')) {
+  const pathname = request.nextUrl.pathname;
+
+  // ── Protect employee dashboard (/) ────────────────────────────────────────
+  if (pathname === '/' || pathname.startsWith('/manager')) {
     if (!user) {
-      // Redirect to login
+      return NextResponse.redirect(new URL('/login', request.url));
+    }
+  }
+
+  // ── Protect /admin routes ─────────────────────────────────────────────────
+  if (pathname.startsWith('/admin')) {
+    if (!user) {
       return NextResponse.redirect(new URL('/login', request.url));
     }
 
-    // Check if user is admin
     const { data: userData } = await supabase
       .from('users')
       .select('role')
       .eq('id', user.id)
       .single();
 
-    if (userData?.role !== 'admin') {
-      // Redirect to unauthorized page
+    // Admins: full access to /admin
+    // Managers: access to /admin/backoffice/books and /admin/backoffice (read-only view of their team)
+    // Employees: no access to /admin
+    const role = userData?.role;
+
+    if (role === 'admin') {
+      // Full access — continue
+    } else if (role === 'manager') {
+      // Managers can view books and the main backoffice dashboard
+      const managerAllowedPaths = [
+        '/admin/backoffice',
+        '/admin/backoffice/books',
+      ];
+      const isAllowed = managerAllowedPaths.some((p) => pathname.startsWith(p));
+      if (!isAllowed) {
+        return NextResponse.redirect(new URL('/unauthorized', request.url));
+      }
+    } else {
       return NextResponse.redirect(new URL('/unauthorized', request.url));
     }
   }
@@ -94,14 +81,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * Feel free to modify this pattern to include more paths.
-     */
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 };
-

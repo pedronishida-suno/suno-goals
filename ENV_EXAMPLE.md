@@ -10,6 +10,26 @@ SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 
 # Admin Configuration
 ADMIN_EMAILS=admin1@suno.com.br,admin2@suno.com.br
+
+# ─── Snowflake Sidecar (Fase 1) ───────────────────────────────────────────
+# URL do sidecar Python (FastAPI) rodando localmente ou em container
+SNOWFLAKE_SIDECAR_URL=http://localhost:8001
+# Segredo compartilhado entre Next.js e o sidecar
+SIDECAR_SECRET=generate-a-strong-random-secret
+
+# ─── AI Terminal (Fase 4) ─────────────────────────────────────────────────
+# 'ollama' para modelo local gratuito | 'claude' para Claude API (premium)
+LLM_PROVIDER=ollama
+
+# Ollama (local, gratuito)
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=openclaw
+
+# Claude API (premium — necessário somente se LLM_PROVIDER=claude)
+ANTHROPIC_API_KEY=sk-ant-...
+
+# OpenAI — opcional, apenas para embeddings RAG se não usar Ollama
+OPENAI_API_KEY=sk-...
 ```
 
 ## Como obter as credenciais do Supabase:

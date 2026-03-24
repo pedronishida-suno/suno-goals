@@ -1,0 +1,22 @@
+{
+  "_comment": "Maps Snowflake column names to backoffice_indicators UUIDs. Add entries as indicators are classified.",
+  "_schema": {
+    "snowflake_table": "The Snowflake table/view to query",
+    "snowflake_column": "The column containing the realizado value",
+    "indicator_id": "The UUID from backoffice_indicators table",
+    "sector": "The business unit / sector tag name",
+    "category": 1
+  },
+  "mappings": [
+    {
+      "_example": true,
+      "snowflake_table": "ANALYTICS.TECH.LEADS_QUALIFICADOS",
+      "snowflake_column": "total_leads",
+      "indicator_id": "REPLACE_WITH_REAL_UUID",
+      "sector": "Tecnologia",
+      "category": 1,
+      "aggregation": "sum",
+      "description": "Leads Qualificados - Status Invest"
+    }
+  ]
+}
