@@ -4,7 +4,9 @@
       "Bash(for f:*)",
       "Bash(do echo:*)",
       "Read(//c/suno-goals/**)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(python3 -c \":*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

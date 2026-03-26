@@ -78,11 +78,41 @@ export default function NewBookPage() {
     }
   };
 
-  const handleSubmit = () => {
-    // TODO: Enviar para o backend
-    console.log('Criando book...', formData);
-    alert('Book criado com sucesso!');
-    router.push('/admin/backoffice/books');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      const payload = {
+        name: formData.name,
+        description: formData.description,
+        owner_id: formData.owner_id,
+        year: formData.year,
+        indicator_ids: formData.selected_indicators.map(i => i.indicator_id),
+        goals_by_indicator: Object.fromEntries(
+          formData.selected_indicators.map(i => [i.indicator_id, i.goals])
+        ),
+      };
+
+      const res = await fetch('/api/books', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        alert(`Erro ao criar book: ${data.error ?? res.statusText}`);
+        return;
+      }
+
+      router.push('/admin/backoffice/books');
+    } catch {
+      alert('Falha na conexão com o servidor.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -179,14 +209,14 @@ export default function NewBookPage() {
               {currentStep === 3 ? (
                 <button
                   onClick={handleSubmit}
-                  disabled={!canProceed()}
+                  disabled={!canProceed() || isSubmitting}
                   className={`px-8 py-2.5 rounded-lg font-semibold transition-all ${
-                    canProceed()
+                    canProceed() && !isSubmitting
                       ? 'bg-suno-red text-white hover:bg-red-700 shadow-sm'
                       : 'bg-neutral-3 text-neutral-5 cursor-not-allowed'
                   }`}
                 >
-                  Criar Book
+                  {isSubmitting ? 'Criando...' : 'Criar Book'}
                 </button>
               ) : (
                 <button

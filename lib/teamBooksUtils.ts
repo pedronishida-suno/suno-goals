@@ -4,10 +4,11 @@ import { TeamBook, Notification, MacroIndicators, IndicatorType } from '@/types/
  * Calcula se um indicador está batendo a meta
  */
 function isIndicatorAchieving(indicator: IndicatorType): boolean {
-  const { percentage, direction } = indicator.accumulated;
-  
+  const { percentage } = indicator.accumulated;
+  const { direction } = indicator;
+
   if (percentage === 0) return false;
-  
+
   if (direction === 'up') {
     return percentage >= 100;
   } else {

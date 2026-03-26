@@ -1,27 +1,53 @@
 import Header from '@/components/Header';
 import EditableIndicatorTable from '@/components/EditableIndicatorTable';
 import TeamBooksSection from '@/components/TeamBooksSection';
-import { mockBookData } from '@/lib/mockData';
-import { mockTeamBooks } from '@/lib/mockTeamBooks';
+import { getCurrentUser } from '@/lib/auth/utils';
+import { getDashboardData } from '@/lib/services/dashboard';
 
-export default function Home() {
+export default async function Home() {
+  const currentYear = new Date().getFullYear();
+
+  let myBook = null;
+  let teamBooks: import('@/types/indicator').TeamBook[] = [];
+  let collaboratorName: string | undefined;
+
+  try {
+    const user = await getCurrentUser();
+    if (user) {
+      collaboratorName = user.full_name ?? undefined;
+      const data = await getDashboardData(user.id, currentYear);
+      myBook = data.myBook;
+      teamBooks = data.teamBooks;
+    }
+  } catch {
+    // Supabase not configured or session error — show empty state
+  }
+
   return (
     <main className="min-h-screen bg-white p-2 sm:p-4 md:p-6 lg:p-8">
       <div className="w-full max-w-[1800px] mx-auto px-2 sm:px-4">
-        {/* Header */}
-        <Header 
-          currentYear={2025}
+        <Header
+          currentYear={currentYear}
+          collaboratorName={collaboratorName}
         />
 
-        {/* Meus Indicadores */}
-        <div className="print:m-0" data-indicator-table>
-          <EditableIndicatorTable initialData={mockBookData} />
-        </div>
+        {myBook ? (
+          <div className="print:m-0" data-indicator-table>
+            <EditableIndicatorTable initialData={myBook} year={currentYear} />
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <p className="text-neutral-5 text-lg mb-2">Nenhum book encontrado para {currentYear}</p>
+            <p className="text-neutral-4 text-sm">
+              Solicite ao administrador a criação do seu book de indicadores.
+            </p>
+          </div>
+        )}
 
-        {/* Books do Time */}
-        <TeamBooksSection books={mockTeamBooks} />
+        {teamBooks.length > 0 && (
+          <TeamBooksSection books={teamBooks} />
+        )}
 
-        {/* Footer para Print */}
         <div className="mt-8 md:mt-10 lg:mt-12 text-center text-xs md:text-sm text-neutral-5 print:mt-4">
           Suno Goals © {new Date().getFullYear()}
         </div>

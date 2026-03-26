@@ -92,7 +92,7 @@ export default function IndicatorCard({ indicator, onClick }: IndicatorCardProps
         {/* Achievement */}
         {(indicator.average_achievement || 0) > 0 && (
           <span className={`text-xs font-bold ${
-            indicator.average_achievement >= 100 ? 'text-neutral-10' : 'text-suno-red'
+            (indicator.average_achievement ?? 0) >= 100 ? 'text-neutral-10' : 'text-suno-red'
           }`}>
             {indicator.average_achievement}%
           </span>

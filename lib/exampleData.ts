@@ -12,6 +12,7 @@ export const bookWith2Indicators: BookData = {
       name: 'NPS - Net Promoter Score',
       unit: '%',
       direction: 'up',
+      editable: true,
       accumulated: {
         meta: 85,
         real: 90,
@@ -37,6 +38,7 @@ export const bookWith2Indicators: BookData = {
       name: 'Tempo de Resposta',
       unit: 'H$',
       direction: 'down',
+      editable: true,
       accumulated: {
         meta: 24,
         real: 18,
@@ -67,6 +69,7 @@ export const bookWith6Indicators: BookData = {
       name: 'Receita Mensal',
       unit: 'R$',
       direction: 'up',
+      editable: true,
       accumulated: {
         meta: 1200000,
         real: 1350000,
@@ -92,6 +95,7 @@ export const bookWith6Indicators: BookData = {
       name: 'Novos Clientes',
       unit: '#',
       direction: 'up',
+      editable: true,
       accumulated: {
         meta: 120,
         real: 145,
@@ -117,6 +121,7 @@ export const bookWith6Indicators: BookData = {
       name: 'Taxa de Conversão',
       unit: '%',
       direction: 'up',
+      editable: true,
       accumulated: {
         meta: 15,
         real: 18,
@@ -142,6 +147,7 @@ export const bookWith6Indicators: BookData = {
       name: 'Churn Rate',
       unit: '%',
       direction: 'down',
+      editable: true,
       accumulated: {
         meta: 5,
         real: 3,
@@ -167,6 +173,7 @@ export const bookWith6Indicators: BookData = {
       name: 'Satisfação do Cliente',
       unit: '%',
       direction: 'up',
+      editable: true,
       accumulated: {
         meta: 90,
         real: 93,
@@ -192,6 +199,7 @@ export const bookWith6Indicators: BookData = {
       name: 'Produtividade da Equipe',
       unit: '#',
       direction: 'up',
+      editable: true,
       accumulated: {
         meta: 500,
         real: 580,

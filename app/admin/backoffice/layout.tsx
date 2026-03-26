@@ -4,15 +4,16 @@ import { useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { 
-  Users, 
-  TrendingUp, 
-  BookOpen, 
-  Settings, 
+import {
+  Users,
+  TrendingUp,
+  BookOpen,
+  Settings,
   LogOut,
   Menu,
   X,
-  UsersRound
+  UsersRound,
+  Bot
 } from 'lucide-react';
 
 const navigation = [
@@ -21,6 +22,7 @@ const navigation = [
   { name: 'Times', href: '/admin/backoffice/teams', icon: UsersRound },
   { name: 'Indicadores', href: '/admin/backoffice/indicators', icon: TrendingUp },
   { name: 'Books', href: '/admin/backoffice/books', icon: BookOpen },
+  { name: 'AI Terminal', href: '/admin/backoffice/ai-terminal', icon: Bot },
   { name: 'Configurações', href: '/admin/backoffice/settings', icon: Settings },
 ];
 
@@ -89,8 +91,10 @@ export default function BackofficeLayout({
         {/* Logout */}
         <div className="p-3 border-t border-neutral-2">
           <button
-            onClick={() => {
-              // TODO: Implement logout
+            onClick={async () => {
+              const { createClient } = await import('@/lib/supabase/client');
+              const supabase = createClient();
+              await supabase.auth.signOut();
               window.location.href = '/login';
             }}
             className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium text-neutral-10 hover:bg-neutral-1 transition-colors"

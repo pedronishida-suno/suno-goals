@@ -66,6 +66,7 @@ export async function middleware(request: NextRequest) {
       const managerAllowedPaths = [
         '/admin/backoffice',
         '/admin/backoffice/books',
+        '/admin/backoffice/ai-terminal',
       ];
       const isAllowed = managerAllowedPaths.some((p) => pathname.startsWith(p));
       if (!isAllowed) {

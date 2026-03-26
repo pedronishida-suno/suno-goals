@@ -1,27 +1,54 @@
-import { 
-  Users, 
-  TrendingUp, 
-  BookOpen, 
+import {
+  Users,
+  TrendingUp,
+  BookOpen,
   AlertCircle,
   CheckCircle,
   XCircle
 } from 'lucide-react';
+import { createClient } from '@/lib/supabase/server';
 
 export default async function BackofficeDashboard() {
-  // 🚧 DESENVOLVIMENTO: Mock user
-  const user = {
-    full_name: 'Admin FP&A',
-    email: 'admin@suno.com.br',
-  };
+  const supabase = await createClient();
 
-  // TODO: Fetch real data from Supabase
+  const { data: { user: authUser } } = await supabase.auth.getUser();
+  const { data: userData } = authUser
+    ? await supabase.from('users').select('full_name, email').eq('id', authUser.id).single()
+    : { data: null };
+
+  const user = userData ?? { full_name: 'Admin', email: '' };
+
+  const currentYear = new Date().getFullYear();
+  const currentMonth = new Date().getMonth() + 1;
+
+  const [
+    { count: totalUsers },
+    { count: totalIndicators },
+    { count: totalBooks },
+    { data: achievementData },
+  ] = await Promise.all([
+    supabase.from('users').select('*', { count: 'exact', head: true }).eq('status', 'active'),
+    supabase.from('backoffice_indicators').select('*', { count: 'exact', head: true }).eq('is_active', true),
+    supabase.from('books').select('*', { count: 'exact', head: true }).eq('year', currentYear).eq('is_active', true),
+    supabase
+      .from('indicator_data')
+      .select('indicator_id, meta, real')
+      .eq('year', currentYear)
+      .eq('month', currentMonth)
+      .not('meta', 'is', null)
+      .not('real', 'is', null),
+  ]);
+
+  const achieving = (achievementData ?? []).filter(r => Number(r.real) >= Number(r.meta)).length;
+  const notAchieving = (achievementData ?? []).filter(r => Number(r.real) < Number(r.meta)).length;
+
   const stats = {
-    totalUsers: 24,
-    totalIndicators: 156,
-    totalBooks: 24,
-    outdatedBooks: 3,
-    achievingIndicators: 98,
-    notAchievingIndicators: 58,
+    totalUsers: totalUsers ?? 0,
+    totalIndicators: totalIndicators ?? 0,
+    totalBooks: totalBooks ?? 0,
+    outdatedBooks: 0,
+    achievingIndicators: achieving,
+    notAchievingIndicators: notAchieving,
   };
 
   return (

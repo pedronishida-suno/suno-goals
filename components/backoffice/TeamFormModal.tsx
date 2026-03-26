@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { X, AlertCircle, Plus, Trash2, User } from 'lucide-react';
-import { Team, TeamFormData, TeamMember } from '@/types/users';
+import { Team, TeamFormData } from '@/types/users';
 import { mockUsers } from '@/lib/mockUsers';
 
 type TeamFormModalProps = {
@@ -33,7 +33,7 @@ export default function TeamFormModal({ isOpen, onClose, onSave, team }: TeamFor
     description: team?.description || '',
     department: team?.department || '',
     manager_id: team?.manager_id || '',
-    members: team?.members || [],
+    member_ids: team?.members.map((m) => m.user_id) || [],
   });
 
   const [errors, setErrors] = useState<Partial<Record<keyof TeamFormData, string>>>({});
@@ -53,11 +53,11 @@ export default function TeamFormModal({ isOpen, onClose, onSave, team }: TeamFor
     // Não pode ser o manager do time
     if (u.id === formData.manager_id) return false;
     // Não pode já estar na lista de membros
-    if (formData.members.some(m => m.user_id === u.id)) return false;
+    if (formData.member_ids.includes(u.id)) return false;
     return true;
   });
 
-  const handleChange = (field: keyof TeamFormData, value: string | TeamMember[]) => {
+  const handleChange = (field: keyof TeamFormData, value: string | string[]) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     setTouched(prev => ({ ...prev, [field]: true }));
     
@@ -69,23 +69,13 @@ export default function TeamFormModal({ isOpen, onClose, onSave, team }: TeamFor
 
   const handleAddMember = () => {
     if (!selectedUserId) return;
-
-    const user = mockUsers.find(u => u.id === selectedUserId);
-    if (!user) return;
-
-    const newMember: TeamMember = {
-      user_id: user.id,
-      user_name: user.full_name,
-      role_in_team: memberRole || undefined,
-    };
-
-    handleChange('members', [...formData.members, newMember]);
+    handleChange('member_ids', [...formData.member_ids, selectedUserId]);
     setSelectedUserId('');
     setMemberRole('');
   };
 
   const handleRemoveMember = (userId: string) => {
-    handleChange('members', formData.members.filter(m => m.user_id !== userId));
+    handleChange('member_ids', formData.member_ids.filter((id) => id !== userId));
   };
 
   const validate = (): boolean => {
@@ -102,8 +92,8 @@ export default function TeamFormModal({ isOpen, onClose, onSave, team }: TeamFor
     }
 
     // Membros (pelo menos 1)
-    if (formData.members.length === 0) {
-      newErrors.members = 'Adicione pelo menos 1 membro ao time';
+    if (formData.member_ids.length === 0) {
+      newErrors.member_ids = 'Adicione pelo menos 1 membro ao time';
     }
 
     setErrors(newErrors);
@@ -119,7 +109,7 @@ export default function TeamFormModal({ isOpen, onClose, onSave, team }: TeamFor
       description: true,
       department: true,
       manager_id: true,
-      members: true,
+      member_ids: true,
     });
 
     if (validate()) {
@@ -134,7 +124,7 @@ export default function TeamFormModal({ isOpen, onClose, onSave, team }: TeamFor
       description: '',
       department: '',
       manager_id: '',
-      members: [],
+      member_ids: [],
     });
     setErrors({});
     setTouched({});
@@ -286,7 +276,7 @@ export default function TeamFormModal({ isOpen, onClose, onSave, team }: TeamFor
                       Membros do Time <span className="text-suno-red">*</span>
                     </p>
                     <p className="text-xs text-neutral-5 mt-0.5">
-                      {formData.members.length} {formData.members.length === 1 ? 'membro' : 'membros'}
+                      {formData.member_ids.length} {formData.member_ids.length === 1 ? 'membro' : 'membros'}
                     </p>
                   </div>
                 </div>
@@ -333,53 +323,49 @@ export default function TeamFormModal({ isOpen, onClose, onSave, team }: TeamFor
                 </div>
 
                 {/* Lista de membros */}
-                {formData.members.length === 0 ? (
+                {formData.member_ids.length === 0 ? (
                   <div className="text-center py-6">
                     <p className="text-sm text-neutral-5">Nenhum membro adicionado ainda</p>
-                    {touched.members && errors.members && (
+                    {touched.member_ids && errors.member_ids && (
                       <p className="text-xs text-suno-red mt-2 flex items-center justify-center gap-1">
                         <AlertCircle className="w-3 h-3" />
-                        {errors.members}
+                        {errors.member_ids}
                       </p>
                     )}
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {formData.members.map((member) => (
-                      <div
-                        key={member.user_id}
-                        className="flex items-center justify-between p-3 bg-white border border-neutral-2 rounded-lg hover:border-neutral-3 transition-colors"
-                      >
-                        <div className="flex items-center gap-3 flex-1 min-w-0">
-                          <div className="w-8 h-8 bg-neutral-1 rounded-full flex items-center justify-center flex-shrink-0">
-                            <User className="w-4 h-4 text-neutral-8" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-neutral-10 truncate">
-                              {member.user_name}
-                            </p>
-                            {member.role_in_team && (
-                              <p className="text-xs text-neutral-5 truncate">
-                                {member.role_in_team}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveMember(member.user_id)}
-                          className="p-2 text-neutral-5 hover:text-suno-red hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                    {formData.member_ids.map((userId) => {
+                      const user = mockUsers.find((u) => u.id === userId);
+                      return (
+                        <div
+                          key={userId}
+                          className="flex items-center justify-between p-3 bg-white border border-neutral-2 rounded-lg hover:border-neutral-3 transition-colors"
                         >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <div className="w-8 h-8 bg-neutral-1 rounded-full flex items-center justify-center flex-shrink-0">
+                              <User className="w-4 h-4 text-neutral-8" />
+                            </div>
+                            <p className="text-sm font-medium text-neutral-10 truncate">
+                              {user?.full_name ?? userId}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveMember(userId)}
+                            className="p-2 text-neutral-5 hover:text-suno-red hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
 
               {/* Warning sobre books individuais */}
-              {formData.members.length > 0 && (
+              {formData.member_ids.length > 0 && (
                 <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
                   <p className="text-xs text-yellow-800">
                     ⚠️ <strong>Importante:</strong> Membros de times não podem ter books individuais. 

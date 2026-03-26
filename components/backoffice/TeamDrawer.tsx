@@ -23,7 +23,7 @@ export default function TeamDrawer({ team, onClose, onEdit, onDelete }: TeamDraw
 
   // Buscar informações adicionais
   const manager = mockUsers.find(u => u.id === team.manager_id);
-  const createdBy = mockUsers.find(u => u.id === team.created_by_id);
+  const createdBy = mockUsers.find(u => u.id === team.created_by);
 
   const handleDelete = () => {
     onDelete(team.id);

@@ -54,7 +54,7 @@ function rowToIndicator(row: Record<string, unknown>): BackofficeIndicator {
       indicator_id: l.indicator_id as string,
       user_id: l.user_id as string,
       user_name: (l.user_name as string) ?? '',
-      action: l.action as BackofficeIndicator['change_log'] extends Array<infer E> ? E['action'] : never,
+      action: l.action as import('@/types/backoffice').IndicatorChangeLog['action'],
       field_changed: l.field_changed as string | undefined,
       old_value: l.old_value as string | undefined,
       new_value: l.new_value as string | undefined,
