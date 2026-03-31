@@ -8,7 +8,18 @@
       "Bash(python3 -c \":*)",
       "Bash(npx tsc:*)",
       "Bash(npx supabase:*)",
-      "Bash(rtk tsc:*)"
+      "Bash(rtk tsc:*)",
+      "Bash(find /c/suno-goals/components/backoffice -name *Sidebar* -o -name *sidebar* -o -name *Nav*)",
+      "Bash(find /c/suno-goals -type f -name *.sql)",
+      "Bash(find /c/suno-goals -maxdepth 1 \\\\\\(-name .env* -o -name *.example \\\\\\) -type f)",
+      "Bash(find /c/suno-goals -maxdepth 1 -name .env* -type f)",
+      "Bash(grep -r .from\\\\\\(/c/suno-goals --include=*.ts --include=*.tsx)",
+      "Bash(xargs grep:*)",
+      "Bash(find \"C:/suno-goals/app/\\(main\\)/admin\" -type f \\\\\\( -name \"*.tsx\" -o -name \"*.ts\" \\\\\\))",
+      "Bash(find C:/suno-goals/app/api/monday -type f -name *.ts -o -name *.tsx)",
+      "Bash(ls /c/suno-goals/app/\\\\\\(main\\\\\\)/admin/backoffice/)",
+      "Bash(ls /c/suno-goals/app/\\\\\\(main\\\\\\)/admin/backoffice/users/)",
+      "Bash(ls /c/suno-goals/app/\\\\\\(main\\\\\\)/admin/backoffice/indicators/)"
     ]
   }
 }

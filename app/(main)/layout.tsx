@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -13,10 +13,13 @@ import {
   Menu,
   X,
   UsersRound,
-  Bot
+  Bot,
+  Home,
+  ChevronDown
 } from 'lucide-react';
 
 const navigation = [
+  { name: 'Meu Book', href: '/', icon: Home },
   { name: 'Dashboard', href: '/admin/backoffice', icon: TrendingUp },
   { name: 'Usuários', href: '/admin/backoffice/users', icon: Users },
   { name: 'Times', href: '/admin/backoffice/teams', icon: UsersRound },
@@ -26,13 +29,23 @@ const navigation = [
   { name: 'Configurações', href: '/admin/backoffice/settings', icon: Settings },
 ];
 
-export default function BackofficeLayout({
+export default function MainLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [userName, setUserName] = useState('Admin');
   const pathname = usePathname();
+
+  useEffect(() => {
+    import('@/lib/supabase/client').then(({ createClient }) => {
+      createClient().auth.getUser().then(({ data }) => {
+        if (data.user?.email) setUserName(data.user.email.split('@')[0]);
+      });
+    });
+  }, []);
 
   return (
     <div className="min-h-screen bg-neutral-1">
@@ -46,7 +59,7 @@ export default function BackofficeLayout({
 
       {/* Sidebar */}
       <div
-        className={`fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-neutral-2 transform transition-transform duration-200 ease-in-out lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-neutral-2 flex flex-col transform transition-transform duration-200 ease-in-out lg:translate-x-0 ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -68,7 +81,7 @@ export default function BackofficeLayout({
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 space-y-1">
+        <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
           {navigation.map((item) => {
             const isActive = pathname === item.href;
             return (
@@ -116,11 +129,38 @@ export default function BackofficeLayout({
             <Menu className="w-5 h-5" />
           </button>
 
-          <div className="flex items-center gap-4 ml-auto">
-            <div className="text-right">
-              <p className="text-sm font-medium text-neutral-10">Admin FP&A</p>
-              <p className="text-xs text-neutral-5">Backoffice</p>
-            </div>
+          <div className="relative flex items-center gap-4 ml-auto">
+            <button 
+              onClick={() => setProfileOpen(!profileOpen)}
+              className="flex items-center gap-2 hover:bg-neutral-1 p-2 rounded-lg transition-colors cursor-pointer"
+            >
+              <div className="text-right">
+                <p className="text-sm font-medium text-neutral-10">{userName}</p>
+                <p className="text-xs text-neutral-5">Admin · FP&A</p>
+              </div>
+              <ChevronDown className="w-4 h-4 text-neutral-5" />
+            </button>
+
+            {profileOpen && (
+              <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-neutral-2 rounded-lg shadow-lg py-1 z-50">
+                <div className="px-4 py-2 border-b border-neutral-2">
+                  <p className="text-sm font-medium text-neutral-10">{userName}</p>
+                  <p className="text-xs text-neutral-5">Admin</p>
+                </div>
+                <button
+                  onClick={async () => {
+                    const { createClient } = await import('@/lib/supabase/client');
+                    const supabase = createClient();
+                    await supabase.auth.signOut();
+                    window.location.href = '/login';
+                  }}
+                  className="flex items-center gap-3 w-full px-4 py-2 text-sm font-medium text-suno-red hover:bg-neutral-1 transition-colors"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Sair da conta
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

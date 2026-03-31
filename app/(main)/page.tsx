@@ -24,7 +24,7 @@ export default async function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-white p-2 sm:p-4 md:p-6 lg:p-8">
+    <div className="bg-white">
       <div className="w-full max-w-[1800px] mx-auto px-2 sm:px-4">
         <Header
           currentYear={currentYear}
@@ -52,6 +52,6 @@ export default async function Home() {
           Suno Goals © {new Date().getFullYear()}
         </div>
       </div>
-    </main>
+    </div>
   );
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
-import { fetchMondayIndicators } from '@/lib/services/monday';
+import { fetchMondayIndicators, normalize } from '@/lib/services/monday';
 import { bulkUpsertIndicatorData, type BulkUpsertRow } from '@/lib/services/indicatorData';
 
 /**
@@ -114,6 +114,3 @@ export async function POST(request: NextRequest) {
   });
 }
 
-function normalize(s: string): string {
-  return s.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
