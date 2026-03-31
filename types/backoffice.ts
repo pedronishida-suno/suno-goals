@@ -77,6 +77,9 @@ export type BackofficeIndicator = {
   created_at: Date;
   updated_at: Date;
   
+  // Monday.com people
+  responsible_people?: { id: number; name: string }[];
+
   // Dados calculados
   total_books?: number;
   average_achievement?: number;

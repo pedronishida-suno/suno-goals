@@ -47,6 +47,7 @@ function rowToIndicator(row: Record<string, unknown>): BackofficeIndicator {
     created_by_name: (row.created_by_name as string) ?? '',
     created_at: new Date(row.created_at as string),
     updated_at: new Date(row.updated_at as string),
+    responsible_people: (row.responsible_people as { id: number; name: string }[]) ?? [],
     total_books: (row.total_books as number) ?? 0,
     average_achievement: (row.average_achievement as number) ?? undefined,
     change_log: rawLog.map((l: Record<string, unknown>) => ({

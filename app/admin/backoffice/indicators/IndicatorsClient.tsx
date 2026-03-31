@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, Search, Filter, X } from 'lucide-react';
+import { Plus, Search, Filter, X, Users } from 'lucide-react';
 import { BackofficeIndicator, IndicatorFilters } from '@/types/backoffice';
+import type { MondayPerson } from '@/app/api/monday/people/route';
 import IndicatorCard from '@/components/backoffice/IndicatorCard';
 import IndicatorDrawer from '@/components/backoffice/IndicatorDrawer';
 import IndicatorFormModal from '@/components/backoffice/IndicatorFormModal';
@@ -20,12 +21,26 @@ export default function IndicatorsClient({ initialIndicators }: Props) {
   const [searchTerm, setSearchTerm] = useState('');
   const [filters, setFilters] = useState<IndicatorFilters>({});
   const [showFilters, setShowFilters] = useState(false);
+  const [people, setPeople] = useState<MondayPerson[]>([]);
+  const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
+  const [showPeople, setShowPeople] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/monday/people')
+      .then(r => r.json())
+      .then((data: MondayPerson[]) => setPeople(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, []);
   const [selectedIndicator, setSelectedIndicator] = useState<BackofficeIndicator | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingIndicator, setEditingIndicator] = useState<BackofficeIndicator | null>(null);
   const [indicatorToDelete, setIndicatorToDelete] = useState<{ id: string; name: string } | null>(null);
 
   const filteredIndicators = indicators.filter(indicator => {
+    if (selectedPersonId !== null) {
+      const hasPerson = (indicator.responsible_people ?? []).some(p => p.id === selectedPersonId);
+      if (!hasPerson) return false;
+    }
     if (searchTerm && !indicator.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
         !indicator.description.toLowerCase().includes(searchTerm.toLowerCase())) {
       return false;
@@ -135,6 +150,8 @@ export default function IndicatorsClient({ initialIndicators }: Props) {
     (filters.tags?.length || 0) +
     (filters.has_books !== undefined ? 1 : 0);
 
+  const selectedPerson = people.find(p => p.id === selectedPersonId) ?? null;
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -155,6 +172,49 @@ export default function IndicatorsClient({ initialIndicators }: Props) {
           Novo Indicador
         </button>
       </div>
+
+      {/* Person Selector */}
+      {people.length > 0 && (
+        <div className="relative">
+          <button
+            onClick={() => setShowPeople(!showPeople)}
+            className={`flex items-center gap-2 px-4 py-2.5 border rounded-lg font-medium text-sm transition-colors ${
+              selectedPersonId !== null
+                ? 'border-suno-red bg-red-50 text-suno-red'
+                : 'border-neutral-3 bg-white text-neutral-10 hover:border-neutral-5'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            {selectedPerson ? selectedPerson.name : 'Ver por pessoa'}
+            {selectedPersonId !== null && (
+              <span
+                onClick={(e) => { e.stopPropagation(); setSelectedPersonId(null); }}
+                className="ml-1 hover:opacity-70"
+              >
+                <X className="w-3 h-3" />
+              </span>
+            )}
+          </button>
+          {showPeople && (
+            <div className="absolute z-20 top-full left-0 mt-1 w-72 bg-white border border-neutral-3 rounded-xl shadow-lg max-h-72 overflow-y-auto">
+              <div className="p-2">
+                {people.map(person => (
+                  <button
+                    key={person.id}
+                    onClick={() => { setSelectedPersonId(person.id); setShowPeople(false); }}
+                    className={`w-full text-left flex items-center justify-between px-3 py-2 rounded-lg text-sm hover:bg-neutral-1 transition-colors ${
+                      selectedPersonId === person.id ? 'bg-red-50 text-suno-red font-medium' : 'text-neutral-10'
+                    }`}
+                  >
+                    <span>{person.name}</span>
+                    <span className="text-xs text-neutral-5">{person.indicator_count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Search and Filters */}
       <div className="flex flex-col sm:flex-row gap-2">

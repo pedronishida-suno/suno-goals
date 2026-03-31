@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, createServiceClient } from '@/lib/supabase/server';
 import { fetchMondayIndicators } from '@/lib/services/monday';
 import { bulkUpsertIndicatorData, type BulkUpsertRow } from '@/lib/services/indicatorData';
 
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
   const year: number = body.year ?? new Date().getFullYear();
 
   // 1. Fetch all indicators from Supabase (id + name for matching)
-  const supabase = await createClient();
+  const supabase = createServiceClient();
   const { data: supabaseIndicators, error: supabaseError } = await supabase
     .from('backoffice_indicators')
     .select('id, name')

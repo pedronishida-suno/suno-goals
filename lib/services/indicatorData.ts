@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
+import { createClient, createServiceClient } from '@/lib/supabase/server';
 
 export interface MonthlyDataPoint {
   year: number;
@@ -6,7 +6,6 @@ export interface MonthlyDataPoint {
   meta: number;
   real: number;
   percentage: number;
-  updated_by?: string;
   updated_at?: Date;
 }
 
@@ -78,7 +77,6 @@ export async function getMultipleIndicatorsData(
       meta: Number(row.meta),
       real: Number(row.real),
       percentage: Number(row.percentage),
-      updated_by: row.updated_by ?? undefined,
       updated_at: row.updated_at ? new Date(row.updated_at) : undefined,
     });
   }
@@ -143,27 +141,30 @@ export interface BulkUpsertRow {
 }
 
 /**
- * Called by the Snowflake sync pipeline.
- * Bypasses the editability check (Snowflake owns the data for cat. 1/2).
+ * Called by sync pipelines (Monday, Snowflake).
+ * Uses the service-role client to bypass RLS.
  */
 export async function bulkUpsertIndicatorData(
   rows: BulkUpsertRow[],
   syncedBy?: string
 ): Promise<{ synced: number; errors: string[] }> {
-  const supabase = await createClient();
+  const supabase = createServiceClient();
   const errors: string[] = [];
   let synced = 0;
 
   // Process in chunks of 100
   const chunkSize = 100;
   for (let i = 0; i < rows.length; i += chunkSize) {
+    // user_id/team_id are NULL for system sync rows — matches the partial index
+    // indicator_data_system_key ON (indicator_id, year, month) WHERE user_id IS NULL AND team_id IS NULL
     const chunk = rows.slice(i, i + chunkSize).map((row) => ({
       indicator_id: row.indicator_id,
       year: row.year,
       month: row.month,
       real: row.real,
       ...(row.meta !== undefined ? { meta: row.meta } : {}),
-      updated_by: syncedBy ?? null,
+      user_id: null,
+      team_id: null,
     }));
 
     const { error, count } = await supabase

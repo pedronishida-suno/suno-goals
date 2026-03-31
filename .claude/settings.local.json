@@ -6,7 +6,9 @@
       "Read(//c/suno-goals/**)",
       "Bash(done)",
       "Bash(python3 -c \":*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(npx supabase:*)",
+      "Bash(rtk tsc:*)"
     ]
   }
 }

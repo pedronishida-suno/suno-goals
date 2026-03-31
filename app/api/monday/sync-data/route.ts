@@ -1,23 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, createServiceClient } from '@/lib/supabase/server';
 
 const MONDAY_API_URL = 'https://api.monday.com/v2';
 const MONDAY_API_TOKEN = process.env.MONDAY_API_TOKEN ?? '';
 const BOARD_ID = 3896178865;
 
-// Column IDs for indicator metadata on the Monday board
-const CATALOG_COLS = ['text2', 'text7', 'text23', 'color91', 'color0', 'color2', 'color8'];
+const CATALOG_COLS = ['text2', 'text7', 'text23', 'color91', 'color0', 'color2', 'color8', 'multiple_person'];
 
 /**
  * POST /api/monday/sync-data
- * Syncs indicator catalog metadata from Monday.com → backoffice_indicators.
- * Updates: is_active, direction, format, aggregation_type, description for matched indicators.
- * Matching is done by normalized name (text2 friendly name vs backoffice_indicators.name).
- *
- * Protected: admin only or service-role bearer token.
+ * Full upsert of indicator catalog from Monday.com → backoffice_indicators.
+ * Matches by monday_item_id (stable). Creates new rows if not yet in Supabase.
+ * Protected: admin session or service-role bearer token.
  */
 export async function POST(request: NextRequest) {
-  // Auth: admin session or service-role bearer
   const authHeader = request.headers.get('authorization');
   const isServiceCall = authHeader === `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`;
 
@@ -37,7 +33,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // 1. Fetch catalog data from Monday
+  // 1. Fetch catalog from Monday
   let mondayItems: MondayCatalogItem[];
   try {
     mondayItems = await fetchCatalogItems();
@@ -48,71 +44,38 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 2. Load existing indicators from Supabase for matching
-  const supabase = await createClient();
-  const { data: existing, error: fetchError } = await supabase
+  // Skip placeholder/empty items
+  const validItems = mondayItems.filter(i => i.friendlyName.trim().length > 0);
+
+  // 2. Upsert by monday_item_id — service client bypasses RLS
+  const supabase = createServiceClient();
+  const { error, count } = await supabase
     .from('backoffice_indicators')
-    .select('id, name');
+    .upsert(
+      validItems.map(item => ({
+        monday_item_id: Number(item.id),
+        name: item.friendlyName,
+        description: item.description || null,
+        direction: item.direction ?? 'up',
+        format: item.format ?? 'number',
+        aggregation_type: item.aggregationType ?? 'none',
+        status: item.isActive === false ? 'in_construction' : 'validated',
+        data_source: 'monday',
+        is_active: true,
+        responsible_people: item.responsiblePeople,
+      })),
+      { onConflict: 'monday_item_id', count: 'exact' }
+    );
 
-  if (fetchError) {
-    return NextResponse.json({ error: fetchError.message }, { status: 500 });
-  }
-
-  const nameToId = new Map<string, string>();
-  for (const ind of existing ?? []) {
-    nameToId.set(normalize(ind.name), ind.id);
-  }
-
-  // 3. Match Monday items to Supabase indicators and build update payloads
-  const updates: { id: string; payload: Record<string, unknown> }[] = [];
-  const unmatched: string[] = [];
-
-  for (const item of mondayItems) {
-    const key = normalize(item.friendlyName || item.name);
-    const indicatorId = nameToId.get(key) ?? nameToId.get(normalize(item.name));
-
-    if (!indicatorId) {
-      unmatched.push(item.friendlyName || item.name);
-      continue;
-    }
-
-    const payload: Record<string, unknown> = {};
-
-    if (item.isActive !== null) payload.is_active = item.isActive;
-    if (item.direction !== null) payload.direction = item.direction;
-    if (item.format !== null) payload.format = item.format;
-    if (item.aggregationType !== null) payload.aggregation_type = item.aggregationType;
-    if (item.description) payload.description = item.description;
-
-    if (Object.keys(payload).length > 0) {
-      updates.push({ id: indicatorId, payload });
-    }
-  }
-
-  // 4. Apply updates in chunks
-  let updated = 0;
-  const errors: string[] = [];
-  for (const { id, payload } of updates) {
-    const { error } = await supabase
-      .from('backoffice_indicators')
-      .update(payload)
-      .eq('id', id);
-
-    if (error) {
-      errors.push(`${id}: ${error.message}`);
-    } else {
-      updated++;
-    }
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
   return NextResponse.json({
     success: true,
     monday_items_fetched: mondayItems.length,
-    matched: updates.length,
-    updated,
-    unmatched: unmatched.length,
-    unmatched_names: unmatched.slice(0, 20),
-    errors: errors.slice(0, 10),
+    valid_items: validItems.length,
+    upserted: count ?? validItems.length,
   });
 }
 
@@ -129,10 +92,11 @@ interface MondayCatalogItem {
   direction: 'up' | 'down' | null;
   format: 'percentage' | 'number' | 'currency' | null;
   aggregationType: 'sum' | 'average' | 'none' | null;
+  responsiblePeople: { id: number; name: string }[];
 }
 
 async function fetchCatalogItems(): Promise<MondayCatalogItem[]> {
-  const colValuesQuery = `column_values(ids: ${JSON.stringify(CATALOG_COLS)}) { id value }`;
+  const colValuesQuery = `column_values(ids: ${JSON.stringify(CATALOG_COLS)}) { id text value }`;
   const items: MondayCatalogItem[] = [];
   let cursor: string | null = null;
 
@@ -163,48 +127,46 @@ async function fetchCatalogItems(): Promise<MondayCatalogItem[]> {
       body: JSON.stringify({ query }),
     });
 
-    if (!res.ok) {
-      throw new Error(`Monday.com API error: ${res.status}`);
-    }
+    if (!res.ok) throw new Error(`Monday.com API error: ${res.status}`);
 
     const json = await res.json() as {
-      data: {
-        boards: Array<{
-          items_page: {
-            cursor: string | null;
-            items: Array<{
-              id: string;
-              name: string;
-              column_values: Array<{ id: string; value: string | null }>;
-            }>;
-          };
-        }>;
-      };
+      data: { boards: Array<{ items_page: { cursor: string | null; items: Array<{ id: string; name: string; column_values: Array<{ id: string; text: string | null; value: string | null }> }> } }> };
       errors?: { message: string }[];
     };
 
-    if (json.errors?.length) {
-      throw new Error(json.errors.map(e => e.message).join(', '));
-    }
+    if (json.errors?.length) throw new Error(json.errors.map(e => e.message).join(', '));
 
     const page = json.data.boards[0]?.items_page;
     if (!page) break;
 
     for (const item of page.items) {
-      const cols: Record<string, unknown> = {};
-      for (const cv of item.column_values) {
-        cols[cv.id] = cv.value ? safeJsonParse(cv.value) : null;
+      const col: Record<string, string | null> = {};
+      for (const cv of item.column_values) { col[cv.id] = cv.text; }
+
+      // Parse people column (value is JSON, text is comma-separated names)
+      const peopleText = col['multiple_person'] ?? '';
+      const peopleValue = item.column_values.find(cv => cv.id === 'multiple_person')?.value;
+      let responsiblePeople: { id: number; name: string }[] = [];
+      if (peopleValue) {
+        try {
+          const parsed = JSON.parse(peopleValue) as { personsAndTeams?: { id: number; kind: string }[] };
+          const names = peopleText.split(',').map(n => n.trim()).filter(Boolean);
+          responsiblePeople = (parsed.personsAndTeams ?? [])
+            .filter(p => p.kind === 'person')
+            .map((p, i) => ({ id: p.id, name: names[i] ?? `Person ${p.id}` }));
+        } catch { /* ignore parse errors */ }
       }
 
       items.push({
         id: item.id,
         name: item.name,
-        friendlyName: extractText(cols['text2']),
-        description: extractText(cols['text23']),
-        isActive: mapStatus(extractLabel(cols['color91'])),
-        direction: mapDirection(extractLabel(cols['color0'])),
-        format: mapFormat(extractLabel(cols['color2'])),
-        aggregationType: mapAggregation(extractLabel(cols['color8'])),
+        friendlyName: col['text2'] ?? '',
+        description: col['text23'] ?? null,
+        isActive: mapStatus(col['color91']),
+        direction: mapDirection(col['color0']),
+        format: mapFormat(col['color2']),
+        aggregationType: mapAggregation(col['color8']),
+        responsiblePeople,
       });
     }
 
@@ -216,62 +178,38 @@ async function fetchCatalogItems(): Promise<MondayCatalogItem[]> {
 }
 
 // =====================================================
-// Parsers
+// Mappers (using .text field — already resolved label)
 // =====================================================
 
-function safeJsonParse(value: string): unknown {
-  try { return JSON.parse(value); } catch { return value; }
-}
-
-function extractText(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (value && typeof value === 'object' && 'text' in value) return String((value as Record<string, unknown>).text);
-  return '';
-}
-
-function extractLabel(value: unknown): string | null {
-  if (!value) return null;
-  if (typeof value === 'object' && 'label' in value) {
-    const label = (value as Record<string, unknown>).label;
-    if (label && typeof label === 'object' && 'text' in label) return String((label as Record<string, unknown>).text);
-    return String(label);
-  }
-  if (typeof value === 'string') return value;
-  return null;
-}
-
-function mapStatus(label: string | null): boolean | null {
-  if (!label) return null;
-  const l = label.toLowerCase();
+function mapStatus(text: string | null): boolean | null {
+  if (!text) return null;
+  const l = text.toLowerCase();
   if (l.includes('ativo') || l === 'active') return true;
   if (l.includes('inativo') || l === 'inactive') return false;
   return null;
 }
 
-function mapDirection(label: string | null): 'up' | 'down' | null {
-  if (!label) return null;
-  const l = label.toLowerCase();
+function mapDirection(text: string | null): 'up' | 'down' | null {
+  if (!text) return null;
+  const l = text.toLowerCase();
   if (l.includes('cima') || l === 'up') return 'up';
   if (l.includes('baixo') || l === 'down') return 'down';
   return null;
 }
 
-function mapFormat(label: string | null): 'percentage' | 'number' | 'currency' | null {
-  if (!label) return null;
-  if (label === '%') return 'percentage';
-  if (label === 'R$') return 'currency';
-  if (label === '#') return 'number';
+function mapFormat(text: string | null): 'percentage' | 'number' | 'currency' | null {
+  if (!text) return null;
+  if (text === '%') return 'percentage';
+  if (text.startsWith('R$')) return 'currency';
+  if (text === '#') return 'number';
+  if (text === 'h') return 'hours' as 'number'; // hours maps to number format
   return null;
 }
 
-function mapAggregation(label: string | null): 'sum' | 'average' | 'none' | null {
-  if (!label) return null;
-  const l = label.toLowerCase();
+function mapAggregation(text: string | null): 'sum' | 'average' | 'none' | null {
+  if (!text) return null;
+  const l = text.toLowerCase();
   if (l.includes('soma') || l === 'sum') return 'sum';
   if (l.includes('média') || l.includes('media') || l === 'average') return 'average';
   return null;
-}
-
-function normalize(s: string): string {
-  return s.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
