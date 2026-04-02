@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
+import { createClient, createServiceClient } from '@/lib/supabase/server';
 import type { User, Team, TeamMember, UserFilters, TeamFilters, UserFormData, TeamFormData, UserRole, UserStatus } from '@/types/users';
 
 // =====================================================
@@ -145,7 +145,7 @@ export async function createUser(
   input: UserFormData,
   createdBy: string
 ): Promise<User | null> {
-  const supabase = await createClient();
+  const supabase = createServiceClient();
   const email = `${input.email_prefix}@suno.com.br`;
 
   // Insert into public.users (auth user creation is handled separately via Supabase invite)
@@ -175,7 +175,7 @@ export async function updateUser(
   id: string,
   input: Partial<UserFormData>
 ): Promise<User | null> {
-  const supabase = await createClient();
+  const supabase = createServiceClient();
 
   const payload: Record<string, unknown> = {};
   if (input.first_name !== undefined || input.last_name !== undefined) {
@@ -202,7 +202,7 @@ export async function updateUser(
 }
 
 export async function deactivateUser(id: string): Promise<boolean> {
-  const supabase = await createClient();
+  const supabase = createServiceClient();
   const { error } = await supabase
     .from('users')
     .update({ is_active: false, status: 'inactive' })
@@ -316,7 +316,7 @@ export async function createTeam(
   input: TeamFormData,
   createdBy: string
 ): Promise<Team | null> {
-  const supabase = await createClient();
+  const supabase = createServiceClient();
 
   const { data, error } = await supabase
     .from('teams')
@@ -358,7 +358,7 @@ export async function updateTeam(
   id: string,
   input: Partial<TeamFormData>
 ): Promise<Team | null> {
-  const supabase = await createClient();
+  const supabase = createServiceClient();
 
   const payload: Record<string, unknown> = {};
   if (input.name !== undefined) payload.name = input.name;
@@ -405,7 +405,7 @@ export async function updateTeam(
 }
 
 export async function deleteTeam(id: string): Promise<boolean> {
-  const supabase = await createClient();
+  const supabase = createServiceClient();
 
   // Clear team_id from members
   await supabase.from('users').update({ team_id: null }).eq('team_id', id);
