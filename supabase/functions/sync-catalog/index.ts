@@ -34,15 +34,16 @@ Deno.serve(async (req: Request) => {
       .from('backoffice_indicators')
       .upsert(
         validItems.map(item => ({
-          monday_item_id:   Number(item.id),
-          name:             item.friendlyName,
-          description:      item.description || '',
-          direction:        item.direction ?? 'up',
-          format:           item.format ?? 'number',
-          aggregation_type: item.aggregationType ?? 'none',
-          status:           item.isActive === false ? 'in_construction' : 'validated',
-          data_source:      'monday',
-          is_active:        true,
+          monday_item_id:    Number(item.id),
+          name:              item.friendlyName,
+          description:       item.description || '',
+          direction:         item.direction ?? 'up',
+          format:            item.format ?? 'number',
+          aggregation_type:  item.aggregationType ?? 'none',
+          status:            item.isActive === false ? 'in_construction' : 'validated',
+          data_source:       'monday',
+          is_active:         true,
+          responsible_people: item.responsiblePeople,
         })),
         { onConflict: 'monday_item_id', count: 'exact' },
       )
@@ -84,6 +85,7 @@ interface CatalogItem {
   direction: 'up' | 'down' | null
   format: 'percentage' | 'number' | 'currency' | 'hours' | null
   aggregationType: 'sum' | 'average' | 'none' | null
+  responsiblePeople: { id: number; name: string }[]
 }
 
 async function fetchCatalog(): Promise<CatalogItem[]> {
@@ -94,8 +96,9 @@ async function fetchCatalog(): Promise<CatalogItem[]> {
     COL_2026.direction,
     COL_2026.format,
     COL_2026.aggregationType,
+    COL_2026.responsible,
   ]
-  const colValuesQ = `column_values(ids: ${JSON.stringify(CATALOG_COLS)}) { id text }`
+  const colValuesQ = `column_values(ids: ${JSON.stringify(CATALOG_COLS)}) { id text value }`
 
   const items: CatalogItem[] = []
   let cursor: string | null = null
@@ -120,7 +123,7 @@ async function fetchCatalog(): Promise<CatalogItem[]> {
       boards: Array<{
         items_page: {
           cursor: string | null
-          items: Array<{ id: string; name: string; column_values: Array<{ id: string; text: string | null }> }>
+          items: Array<{ id: string; name: string; column_values: Array<{ id: string; text: string | null; value: string | null }> }>
         }
       }>
     }
@@ -129,18 +132,22 @@ async function fetchCatalog(): Promise<CatalogItem[]> {
     if (!page) break
 
     for (const item of page.items) {
-      const col: Record<string, string | null> = {}
-      for (const cv of item.column_values) col[cv.id] = cv.text
+      const col: Record<string, { text: string | null; value: string | null }> = {}
+      for (const cv of item.column_values) col[cv.id] = { text: cv.text, value: cv.value }
 
       items.push({
-        id:              item.id,
-        name:            item.name,
-        friendlyName:    col[COL_2026.friendlyName] ?? item.name,
-        description:     col[COL_2026.description] ?? null,
-        isActive:        mapStatus(col[COL_2026.status]),
-        direction:       mapDirection(col[COL_2026.direction]),
-        format:          mapFormat(col[COL_2026.format]),
-        aggregationType: mapAggregation(col[COL_2026.aggregationType]),
+        id:               item.id,
+        name:             item.name,
+        friendlyName:     col[COL_2026.friendlyName]?.text ?? item.name,
+        description:      col[COL_2026.description]?.text ?? null,
+        isActive:         mapStatus(col[COL_2026.status]?.text ?? null),
+        direction:        mapDirection(col[COL_2026.direction]?.text ?? null),
+        format:           mapFormat(col[COL_2026.format]?.text ?? null),
+        aggregationType:  mapAggregation(col[COL_2026.aggregationType]?.text ?? null),
+        responsiblePeople: parseResponsible(
+          col[COL_2026.responsible]?.value ?? null,
+          col[COL_2026.responsible]?.text ?? null,
+        ),
       })
     }
 
@@ -182,4 +189,25 @@ function mapAggregation(t: string | null): 'sum' | 'average' | 'none' | null {
   if (l.includes('soma') || l === 'sum') return 'sum'
   if (l.includes('média') || l.includes('media') || l === 'average') return 'average'
   return null
+}
+
+/**
+ * Parses the Monday.com multiple_person column into [{id, name}].
+ * - value JSON: '{"personsAndTeams":[{"id":12345,"kind":"person"},...]}'  → IDs
+ * - text field: "Alice Smith, Bob Jones"                                  → names (same order)
+ */
+function parseResponsible(
+  value: string | null,
+  text?: string | null
+): { id: number; name: string }[] {
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value) as { personsAndTeams?: { id: number; kind: string }[] }
+    const persons = (parsed.personsAndTeams ?? []).filter(p => p.kind === 'person')
+    // Names come from the text field, comma-separated, in the same order as personsAndTeams
+    const names = text ? text.split(',').map(n => n.trim()) : []
+    return persons.map((p, i) => ({ id: p.id, name: names[i] ?? '' }))
+  } catch {
+    return []
+  }
 }

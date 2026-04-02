@@ -1,4 +1,7 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server';
+// Note: reads (getIndicatorData, getMultipleIndicatorsData) use the user JWT client so RLS
+// SELECT policies apply.  Writes (upsertIndicatorData, bulkUpsertIndicatorData) use the
+// service-role client to bypass RLS — auth is verified at the API route level.
 
 export interface MonthlyDataPoint {
   year: number;
@@ -97,10 +100,9 @@ export interface UpsertDataInput {
 }
 
 export async function upsertIndicatorData(input: UpsertDataInput): Promise<boolean> {
-  const supabase = await createClient();
-
-  // Verify the indicator is editable before writing
-  const { data: indicator } = await supabase
+  // Use user-JWT client only for the read check (RLS SELECT policy allows authenticated reads).
+  const userClient = await createClient();
+  const { data: indicator } = await userClient
     .from('backoffice_indicators')
     .select('data_source, category')
     .eq('id', input.indicator_id)
@@ -121,6 +123,9 @@ export async function upsertIndicatorData(input: UpsertDataInput): Promise<boole
   if (input.real !== undefined) upsertPayload.real = input.real;
   if (input.meta !== undefined) upsertPayload.meta = input.meta;
 
+  // Use service-role client for the write: indicator_data has no user-facing write RLS policy.
+  // Auth is already verified in the API route handler before this function is called.
+  const supabase = createServiceClient();
   const { error } = await supabase
     .from('indicator_data')
     .upsert(upsertPayload, { onConflict: 'indicator_id,year,month' });
