@@ -59,30 +59,42 @@ export async function getMultipleIndicatorsData(
 
   const supabase = await createClient();
 
-  const { data, error } = await supabase
-    .from('indicator_data')
-    .select('*')
-    .in('indicator_id', indicatorIds)
-    .eq('year', year)
-    .order('month');
-
-  if (error) {
-    console.error('[getMultipleIndicatorsData]', error.message);
-    return {};
+  // PostgREST encodes the ID list in the URL — chunk to avoid 414 Request-URI Too Long
+  // when there are hundreds/thousands of indicator IDs (e.g. global fallback dashboard).
+  const CHUNK = 200;
+  const chunks: string[][] = [];
+  for (let i = 0; i < indicatorIds.length; i += CHUNK) {
+    chunks.push(indicatorIds.slice(i, i + CHUNK));
   }
 
   const result: Record<string, MonthlyDataPoint[]> = {};
-  for (const row of data ?? []) {
-    if (!result[row.indicator_id]) result[row.indicator_id] = [];
-    result[row.indicator_id].push({
-      year: row.year,
-      month: row.month,
-      meta: Number(row.meta),
-      real: Number(row.real),
-      percentage: Number(row.percentage),
-      updated_at: row.updated_at ? new Date(row.updated_at) : undefined,
-    });
+
+  for (const chunk of chunks) {
+    const { data, error } = await supabase
+      .from('indicator_data')
+      .select('indicator_id, year, month, meta, real, percentage, updated_at')
+      .in('indicator_id', chunk)
+      .eq('year', year)
+      .order('month');
+
+    if (error) {
+      console.error('[getMultipleIndicatorsData]', error.message);
+      continue;
+    }
+
+    for (const row of data ?? []) {
+      if (!result[row.indicator_id]) result[row.indicator_id] = [];
+      result[row.indicator_id].push({
+        year: row.year,
+        month: row.month,
+        meta: Number(row.meta),
+        real: Number(row.real),
+        percentage: Number(row.percentage ?? 0),
+        updated_at: row.updated_at ? new Date(row.updated_at) : undefined,
+      });
+    }
   }
+
   return result;
 }
 
@@ -114,21 +126,38 @@ export async function upsertIndicatorData(input: UpsertDataInput): Promise<boole
     return false;
   }
 
-  const upsertPayload: Record<string, unknown> = {
-    indicator_id: input.indicator_id,
-    year: input.year,
-    month: input.month,
-    updated_by: input.updated_by,
-  };
-  if (input.real !== undefined) upsertPayload.real = input.real;
-  if (input.meta !== undefined) upsertPayload.meta = input.meta;
-
-  // Use service-role client for the write: indicator_data has no user-facing write RLS policy.
-  // Auth is already verified in the API route handler before this function is called.
   const supabase = createServiceClient();
-  const { error } = await supabase
+
+  // Can't use .upsert() with onConflict here — the unique constraint on indicator_data
+  // is a PARTIAL index (WHERE user_id IS NULL AND team_id IS NULL), which PostgREST
+  // can't target via column names. Use SELECT-then-UPDATE/INSERT instead.
+  const { data: existing } = await supabase
     .from('indicator_data')
-    .upsert(upsertPayload, { onConflict: 'indicator_id,year,month' });
+    .select('id')
+    .eq('indicator_id', input.indicator_id)
+    .eq('year', input.year)
+    .eq('month', input.month)
+    .is('user_id', null)
+    .is('team_id', null)
+    .maybeSingle();
+
+  const payload: Record<string, unknown> = { updated_by: input.updated_by };
+  if (input.real !== undefined) payload.real = input.real;
+  if (input.meta !== undefined) payload.meta = input.meta;
+
+  let error;
+  if (existing?.id) {
+    ({ error } = await supabase.from('indicator_data').update(payload).eq('id', existing.id));
+  } else {
+    ({ error } = await supabase.from('indicator_data').insert({
+      indicator_id: input.indicator_id,
+      year: input.year,
+      month: input.month,
+      user_id: null,
+      team_id: null,
+      ...payload,
+    }));
+  }
 
   if (error) {
     console.error('[upsertIndicatorData]', error.message);
