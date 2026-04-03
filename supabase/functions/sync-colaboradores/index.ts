@@ -1,8 +1,13 @@
 /**
  * sync-colaboradores — Edge Function
  * Syncs the COLABORADORES Monday board → public.users (update only).
- * Cannot create new auth users — only updates existing rows by
+ * Cannot create new auth users — only updates existing rows matched by
  * monday_item_id → email → full_name.
+ *
+ * Fields synced per user:
+ *   monday_item_id, full_name, email, is_active, status,
+ *   department (área), diretoria, grade, negocio, role (from nivel),
+ *   manager_id (resolved from manager_email)
  *
  * POST https://{project}.supabase.co/functions/v1/sync-colaboradores
  */
@@ -25,10 +30,10 @@ Deno.serve(async (req: Request) => {
   const { logId, finish } = await openSyncLog(supabase, 'colaboradores', BOARDS.COLABORADORES)
 
   try {
-    // 1. Fetch from Monday
+    // 1. Fetch all items from the Colaboradores Monday board
     const mondayItems = await fetchColaboradores()
 
-    // 2. Load existing users for matching
+    // 2. Load existing Supabase users for matching
     const { data: existingUsers, error: usersErr } = await supabase
       .from('users')
       .select('id, email, full_name, monday_item_id')
@@ -38,9 +43,10 @@ Deno.serve(async (req: Request) => {
       return Response.json({ error: usersErr.message }, { status: 500, headers: corsHeaders() })
     }
 
-    const byMondayId = new Map<number, string>()
-    const byEmail    = new Map<string, string>()
-    const byName     = new Map<string, string>()
+    // Build lookup maps for matching Monday items → Supabase user IDs
+    const byMondayId = new Map<number, string>()   // monday_item_id → supabase user id
+    const byEmail    = new Map<string, string>()   // normalized email → supabase user id
+    const byName     = new Map<string, string>()   // normalized full_name → supabase user id
 
     for (const u of existingUsers ?? []) {
       if (u.monday_item_id) byMondayId.set(Number(u.monday_item_id), u.id)
@@ -48,40 +54,69 @@ Deno.serve(async (req: Request) => {
       if (u.full_name)      byName.set(normalize(u.full_name), u.id)
     }
 
-    // 3. Build update payloads
-    type Payload = { userId: string; data: Record<string, unknown> }
-    const updates: Payload[] = []
+    // 3. Build update payloads — two passes needed:
+    //    Pass A: map each Monday item → supabase user_id + raw payload (manager_email stored)
+    //    Pass B: resolve manager_email → manager_id using the same byEmail map
+
+    type RawUpdate = {
+      userId: string
+      data: Record<string, unknown>
+      manager_email: string | null
+    }
+    const rawUpdates: RawUpdate[] = []
     const notInSupabase: string[] = []
     let skippedNoIdentity = 0
 
     for (const item of mondayItems) {
       const mid = Number(item.id)
+
+      // Attempt match: monday_item_id > email > name
       let userId: string | undefined =
         byMondayId.get(mid) ??
         (item.email ? byEmail.get(normalize(item.email)) : undefined) ??
         byName.get(normalize(item.name))
 
       if (!userId) {
-        if (!item.email && !item.name) skippedNoIdentity++
-        else notInSupabase.push(item.email ? `${item.name} <${item.email}>` : item.name)
+        if (!item.email && !item.name) {
+          skippedNoIdentity++
+        } else {
+          notInSupabase.push(item.email ? `${item.name} <${item.email}>` : item.name)
+        }
         continue
       }
 
-      const payload: Record<string, unknown> = {
+      const data: Record<string, unknown> = {
         monday_item_id: mid,
         full_name:      item.name,
         is_active:      item.status !== 'inactive',
+        status:         item.status === 'inactive' ? 'inactive' : 'active',
       }
-      if (item.email)      payload.email      = item.email
-      if (item.department) payload.department = item.department
+
+      if (item.email)     data.email     = item.email
+      if (item.area)      data.department = item.area
+      if (item.diretoria) data.diretoria  = item.diretoria
+      if (item.grade)     data.grade      = item.grade
+      if (item.negocio)   data.negocio    = item.negocio
 
       const role = mapRole(item.nivel)
-      if (role) payload.role = role
+      if (role) data.role = role
 
-      updates.push({ userId, data: payload })
+      rawUpdates.push({ userId, data, manager_email: item.manager_email })
     }
 
-    // 4. Execute updates in chunks
+    // Pass B: resolve manager_id for each update
+    type FinalUpdate = { userId: string; data: Record<string, unknown> }
+    const updates: FinalUpdate[] = rawUpdates.map(({ userId, data, manager_email }) => {
+      if (manager_email) {
+        const managerId = byEmail.get(normalize(manager_email))
+        if (managerId && managerId !== userId) {
+          data.manager_id = managerId
+        }
+      }
+      return { userId, data }
+    })
+
+    // 4. Execute updates in chunks of 100
     const CHUNK = 100
     let synced = 0
     const dbErrors: string[] = []
@@ -134,12 +169,16 @@ Deno.serve(async (req: Request) => {
 // ─── Monday fetcher ──────────────────────────────────────────────────────────
 
 interface ColaboradorItem {
-  id: string
-  name: string
-  email: string | null
-  status: 'active' | 'inactive' | null
-  department: string | null
-  nivel: string | null
+  id:            string
+  name:          string
+  email:         string | null
+  manager_email: string | null
+  status:        'active' | 'inactive' | null
+  area:          string | null   // Área / department
+  diretoria:     string | null   // Diretoria
+  grade:         string | null   // Grade
+  negocio:       string | null   // Negócio / Business Unit
+  nivel:         string | null   // Nível (used for role mapping)
 }
 
 async function fetchColaboradores(): Promise<ColaboradorItem[]> {
@@ -165,6 +204,7 @@ async function fetchColaboradores(): Promise<ColaboradorItem[]> {
         }
       }
     `
+
     type Page = {
       boards: Array<{
         items_page: {
@@ -177,6 +217,7 @@ async function fetchColaboradores(): Promise<ColaboradorItem[]> {
         }
       }>
     }
+
     const data = await mondayGraphQL<Page>(query)
     const page = data.boards[0]?.items_page
     if (!page) break
@@ -189,23 +230,21 @@ async function fetchColaboradores(): Promise<ColaboradorItem[]> {
         val[cv.id]  = cv.value
       }
 
-      // Email is stored as JSON: { "email": "...", "text": "..." }
-      let email: string | null = text[COL_COLABORADORES.email] ?? null
-      const rawEmailVal = val[COL_COLABORADORES.email]
-      if (rawEmailVal) {
-        try {
-          const parsed = JSON.parse(rawEmailVal) as { email?: string }
-          email = parsed.email ?? email
-        } catch { /* keep text fallback */ }
-      }
+      // Email columns are stored as JSON: { "email": "...", "text": "..." }
+      const email         = parseEmailCol(val[COL_COLABORADORES.email],         text[COL_COLABORADORES.email])
+      const manager_email = parseEmailCol(val[COL_COLABORADORES.manager_email], text[COL_COLABORADORES.manager_email])
 
       items.push({
-        id:         item.id,
-        name:       item.name,
+        id:            item.id,
+        name:          item.name,
         email,
-        status:     mapStatus(text[COL_COLABORADORES.status]),
-        department: text[COL_COLABORADORES.area] ?? null,
-        nivel:      text[COL_COLABORADORES.nivel] ?? null,
+        manager_email,
+        status:        mapStatus(text[COL_COLABORADORES.status]),
+        area:          text[COL_COLABORADORES.area]      ?? null,
+        diretoria:     text[COL_COLABORADORES.diretoria] ?? null,
+        grade:         text[COL_COLABORADORES.grade]     ?? null,
+        negocio:       text[COL_COLABORADORES.negocio]   ?? null,
+        nivel:         text[COL_COLABORADORES.nivel]     ?? null,
       })
     }
 
@@ -214,6 +253,19 @@ async function fetchColaboradores(): Promise<ColaboradorItem[]> {
   }
 
   return items
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Parse a Monday email column (stored as JSON or plain text). */
+function parseEmailCol(value: string | null | undefined, textFallback: string | null | undefined): string | null {
+  if (value) {
+    try {
+      const parsed = JSON.parse(value) as { email?: string }
+      if (parsed.email) return parsed.email
+    } catch { /* fall through to text */ }
+  }
+  return textFallback ?? null
 }
 
 function mapStatus(t: string | null): 'active' | 'inactive' | null {

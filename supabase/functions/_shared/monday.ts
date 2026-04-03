@@ -70,13 +70,16 @@ export const COL_BOOKS = {
   responsible: 'multiple_person_mm02xr6h',
 } as const
 
-// Column IDs for COLABORADORES board
+// Column IDs for COLABORADORES board (3958295293)
 export const COL_COLABORADORES = {
-  email:      'text42',      // Email do colaborador
-  status:     'status8',     // Status colaborador (Ativo/Inativo)
-  area:       'status3',     // Área
-  diretoria:  'status5',     // Diretoria
-  nivel:      'status00',    // Nível
+  email:         'text42',   // Email do colaborador
+  manager_email: 'text3',    // Email do gestor/manager
+  status:        'status8',  // Status colaborador (Ativo/Inativo)
+  area:          'status3',  // Área / department
+  diretoria:     'status5',  // Diretoria
+  grade:         'status6',  // Grade
+  negocio:       'status99', // Negócio / Business Unit
+  nivel:         'status00', // Nível (for role mapping)
 } as const
 
 export function makeSupabase() {
