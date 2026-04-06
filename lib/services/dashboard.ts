@@ -3,6 +3,7 @@
  * Transforms BackofficeBook + indicator_data into the BookData / TeamBook types
  * expected by the dashboard components.
  */
+import { createClient } from '@/lib/supabase/server';
 import { getBooksByOwner, getBooks } from './books';
 import { getMultipleIndicatorsData } from './indicatorData';
 import type { BookData, IndicatorType, TeamBook } from '@/types/indicator';
@@ -66,10 +67,45 @@ function buildIndicatorType(
   };
 }
 
+async function getGlobalIndicatorsData(year: number): Promise<BookData> {
+  const supabase = await createClient();
+  const { data: indicators } = await supabase
+    .from('backoffice_indicators')
+    .select('id, name, format, direction')
+    .eq('is_active', true)
+    .order('name');
+
+  const rows = indicators ?? [];
+  const ids = rows.map((i: { id: string }) => i.id);
+  const dataByIndicator = ids.length > 0 ? await getMultipleIndicatorsData(ids, year) : {};
+
+  const syntheticBIs: BookIndicatorWithGoals[] = rows.map(
+    (ind: { id: string; name: string; format: BookIndicatorWithGoals['indicator_format']; direction: 'up' | 'down' }, idx: number) => ({
+      id: ind.id,
+      indicator_id: ind.id,
+      indicator_name: ind.name,
+      indicator_format: ind.format,
+      indicator_direction: ind.direction,
+      indicator_tags: [],
+      display_order: idx,
+      goals: {},
+      has_missing_goals: false,
+      missing_goals_count: 0,
+    })
+  );
+
+  return {
+    indicators: syntheticBIs.map((bi) => ({
+      ...buildIndicatorType(bi, dataByIndicator),
+      editable: false,
+    })),
+  };
+}
+
 export async function getDashboardData(
   userId: string,
   year: number
-): Promise<{ myBook: BookData | null; teamBooks: TeamBook[] }> {
+): Promise<{ myBook: BookData; teamBooks: TeamBook[] }> {
   // Fetch user's own books and all readable books in parallel
   const [myBooks, allBooks] = await Promise.all([
     getBooksByOwner(userId, year),
@@ -89,9 +125,10 @@ export async function getDashboardData(
   const dataByIndicator =
     uniqueIds.length > 0 ? await getMultipleIndicatorsData(uniqueIds, year) : {};
 
-  const myBookData: BookData | null = myBook
-    ? { indicators: myBook.indicators.map((bi) => buildIndicatorType(bi, dataByIndicator)) }
-    : null;
+  const myBookData: BookData =
+    myBook
+      ? { indicators: myBook.indicators.map((bi) => buildIndicatorType(bi, dataByIndicator)) }
+      : await getGlobalIndicatorsData(year);
 
   const teamBooks: TeamBook[] = teamBooksRaw.map((book) => ({
     id: book.id,

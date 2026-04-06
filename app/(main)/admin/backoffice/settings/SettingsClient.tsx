@@ -3,8 +3,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   RefreshCw, BookOpen, Users, BarChart3, Database,
-  Zap, CheckCircle, XCircle, Clock, AlertCircle,
+  Zap, CheckCircle, XCircle, Clock, AlertCircle, CalendarClock,
 } from 'lucide-react';
+
+const SUPABASE_URL = 'https://iywpulmxiggcohdefgim.supabase.co';
+const EDGE_FN_BASE = `${SUPABASE_URL}/functions/v1`;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -42,32 +45,36 @@ const SYNC_CONFIGS = [
     label:       'Catálogo de Indicadores',
     description: 'Sincroniza nomes, formatos e responsáveis do board principal',
     icon:        Database,
-    endpoint:    '/api/monday/sync-data',
+    endpoint:    `${EDGE_FN_BASE}/sync-catalog`,
     body:        {},
+    useServiceKey: true,
   },
   {
     key:         'data',
     label:       'Dados Mensais',
     description: 'Sincroniza metas e realizados do ano corrente',
     icon:        BarChart3,
-    endpoint:    '/api/monday/sync',
+    endpoint:    `${EDGE_FN_BASE}/sync-indicator-data`,
     body:        () => ({ year: new Date().getFullYear() }),
+    useServiceKey: true,
   },
   {
     key:         'colaboradores',
     label:       'Colaboradores',
     description: 'Atualiza perfis de usuários a partir do board de pessoas',
     icon:        Users,
-    endpoint:    '/api/monday/sync-colaboradores',
+    endpoint:    `${EDGE_FN_BASE}/sync-colaboradores`,
     body:        {},
+    useServiceKey: true,
   },
   {
     key:         'books',
     label:       'Resultado Books',
     description: 'Sincroniza dados do board Resultado Books 2025',
     icon:        BookOpen,
-    endpoint:    '/api/monday/sync-books',
+    endpoint:    `${EDGE_FN_BASE}/sync-resultado-books`,
     body:        { year: 2025 },
+    useServiceKey: true,
   },
 ] as const;
 
@@ -86,13 +93,13 @@ const INITIAL_STATES: Record<SyncKey, SyncButtonState> = {
 function buildSuccessMessage(key: string, data: Record<string, unknown>): string {
   switch (key) {
     case 'catalog':
-      return `${data.upserted ?? data.valid_items ?? '?'} indicadores sincronizados`;
+      return `${data.synced ?? data.upserted ?? data.valid_items ?? '?'} indicadores sincronizados`;
     case 'data':
-      return `${data.synced ?? '?'} linhas · ${data.matched ?? '?'} indicadores correspondidos`;
+      return `${data.synced ?? '?'} linhas · ${data.fetched ?? '?'} itens buscados`;
     case 'colaboradores':
-      return `${data.updated ?? '?'} usuários atualizados · ${data.not_in_supabase_count ?? 0} não encontrados`;
+      return `${data.synced ?? data.updated ?? '?'} usuários atualizados · ${data.not_in_supabase_count ?? 0} não encontrados`;
     case 'books':
-      return `${data.synced ?? '?'} linhas · ${data.matched ?? '?'} indicadores correspondidos`;
+      return `${data.data_rows_synced ?? data.synced ?? '?'} linhas · ${data.books_created ?? 0} books criados`;
     default:
       return 'Sincronização concluída';
   }
@@ -185,6 +192,15 @@ function SyncButton({ label, description, Icon, state, disabled, onClick, fullWi
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+interface CronJob {
+  jobid:       number;
+  jobname:     string;
+  schedule:    string;
+  active:      boolean;
+  last_run_at: string | null;
+  last_status: string | null;
+}
+
 interface Props {
   initialLog: SyncLogEntry[];
 }
@@ -193,6 +209,7 @@ export default function SettingsClient({ initialLog }: Props) {
   const [states, setStates]     = useState<Record<SyncKey, SyncButtonState>>(INITIAL_STATES);
   const [syncLog, setSyncLog]   = useState<SyncLogEntry[]>(initialLog);
   const [logLoading, setLogLoading] = useState(false);
+  const [cronJobs, setCronJobs] = useState<CronJob[]>([]);
 
   const anyLoading = Object.values(states).some(s => s.status === 'loading');
 
@@ -206,14 +223,35 @@ export default function SettingsClient({ initialLog }: Props) {
     }
   }, []);
 
-  useEffect(() => { void fetchLog(); }, [fetchLog]);
+  const fetchCronJobs = useCallback(async () => {
+    try {
+      const res = await fetch('/api/monday/cron-status');
+      if (res.ok) {
+        const json = await res.json() as { jobs: CronJob[] };
+        setCronJobs(json.jobs ?? []);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    void fetchLog();
+    void fetchCronJobs();
+  }, [fetchLog, fetchCronJobs]);
 
   const runSync = useCallback(async (key: SyncKey, endpoint: string, body: Record<string, unknown>) => {
     setStates(prev => ({ ...prev, [key]: { status: 'loading', result: null } }));
     try {
-      const res  = await fetch(endpoint, {
+      // Edge Functions are deployed with --no-verify-jwt; anon key is sufficient.
+      const isEdgeFn = endpoint.includes('supabase.co/functions');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (isEdgeFn) {
+        // Supabase Edge Functions need an apikey header even with --no-verify-jwt
+        headers['apikey'] = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
+        headers['Authorization'] = `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''}`;
+      }
+      const res = await fetch(endpoint, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body:    JSON.stringify(body),
       });
       const data = await res.json() as Record<string, unknown>;
@@ -272,9 +310,10 @@ export default function SettingsClient({ initialLog }: Props) {
             Sincronização Monday.com
           </h2>
         </div>
-        <p className="text-sm text-neutral-6 mb-6">
-          Sincronize dados manualmente. A sincronização automática ocorre via webhook quando
-          itens são alterados no Monday.com.
+        <p className="text-sm text-neutral-6 mb-4">
+          Use <strong>Sincronizar Tudo</strong> para importar todos os dados já existentes no Monday.com
+          (backfill inicial). Após isso, o webhook e o agendamento diário mantêm os dados
+          atualizados automaticamente.
         </p>
 
         {/* Individual sync buttons */}
@@ -309,24 +348,87 @@ export default function SettingsClient({ initialLog }: Props) {
         </div>
       </div>
 
+      {/* ── Auto-Schedule Status ───────────────────────────────────────────── */}
+      <div className="bg-white border border-neutral-2 rounded-xl p-6">
+        <div className="flex items-center gap-3 mb-3">
+          <CalendarClock className="w-5 h-5 text-neutral-6" />
+          <h2 className="font-display font-semibold text-lg text-neutral-10">
+            Agendamento Automático
+          </h2>
+        </div>
+        <p className="text-sm text-neutral-6 mb-4">
+          Sincronização diária via <code className="text-xs bg-neutral-1 px-1 py-0.5 rounded">pg_cron</code>.
+          Roda automaticamente todos os dias sem intervenção manual.
+        </p>
+        {cronJobs.length === 0 ? (
+          <p className="text-xs text-neutral-5">Nenhum job agendado encontrado.</p>
+        ) : (
+          <div className="space-y-2">
+            {cronJobs.map(job => {
+              const labelMap: Record<string, string> = {
+                'monday-sync-catalog':       'Catálogo de Indicadores',
+                'monday-sync-indicator-data': 'Dados Mensais',
+              };
+              const scheduleLabel: Record<string, string> = {
+                '0 5 * * *': 'Todo dia às 02:00 BRT',
+                '0 6 * * *': 'Todo dia às 03:00 BRT',
+              };
+              return (
+                <div key={job.jobid} className="flex items-center justify-between bg-neutral-1 rounded-lg px-3 py-2.5">
+                  <div>
+                    <p className="text-sm font-medium text-neutral-10">
+                      {labelMap[job.jobname] ?? job.jobname}
+                    </p>
+                    <p className="text-xs text-neutral-6">
+                      {scheduleLabel[job.schedule] ?? job.schedule}
+                      {job.last_run_at && (
+                        <> · Última execução: {formatDate(job.last_run_at)}</>
+                      )}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {job.last_status === 'succeeded' && (
+                      <CheckCircle className="w-4 h-4 text-green-500" />
+                    )}
+                    {job.last_status === 'failed' && (
+                      <XCircle className="w-4 h-4 text-red-500" />
+                    )}
+                    <span className={[
+                      'text-xs px-2 py-0.5 rounded-full font-medium',
+                      job.active
+                        ? 'bg-green-50 text-green-700'
+                        : 'bg-neutral-2 text-neutral-6',
+                    ].join(' ')}>
+                      {job.active ? 'Ativo' : 'Inativo'}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {/* ── Webhook Info ───────────────────────────────────────────────────── */}
       <div className="bg-white border border-neutral-2 rounded-xl p-6">
         <div className="flex items-center gap-3 mb-3">
           <AlertCircle className="w-5 h-5 text-neutral-6" />
           <h2 className="font-display font-semibold text-lg text-neutral-10">
-            Configuração do Webhook
+            Webhook (Tempo Real)
           </h2>
         </div>
         <p className="text-sm text-neutral-6 mb-3">
-          Registre o endpoint abaixo no Monday.com para sincronização automática em tempo real.
+          Registre o endpoint abaixo no Monday.com para sincronização instantânea quando itens
+          forem alterados.
         </p>
         <div className="flex items-center gap-2 bg-neutral-1 rounded-lg px-3 py-2">
           <code className="text-xs text-neutral-8 font-mono break-all">
-            {typeof window !== 'undefined' ? window.location.origin : ''}/api/monday/webhook
+            {`${SUPABASE_URL}/functions/v1/monday-webhook`}
           </code>
         </div>
         <p className="text-xs text-neutral-5 mt-2">
-          Admin → Integrações → Webhooks → Adicionar Webhook · Defina <code>MONDAY_WEBHOOK_SECRET</code> no .env.local
+          Monday: Automações → Webhook → cole a URL acima · desafio de verificação é respondido
+          automaticamente.
         </p>
       </div>
 

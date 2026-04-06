@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
+import { createClient, createServiceClient } from '@/lib/supabase/server';
 import type { BackofficeIndicator, IndicatorFilters, IndicatorTag, IndicatorTagCategory } from '@/types/backoffice';
 
 // =====================================================
@@ -169,7 +169,7 @@ export async function createIndicator(
   input: IndicatorFormInput,
   userId: string
 ): Promise<BackofficeIndicator | null> {
-  const supabase = await createClient();
+  const supabase = createServiceClient();
 
   const { data, error } = await supabase
     .from('backoffice_indicators')
@@ -193,7 +193,7 @@ export async function createIndicator(
     return null;
   }
 
-  // Upsert tag relations
+  // Upsert tag relations (service client already in scope)
   if (input.tag_ids.length > 0) {
     await supabase.from('indicator_tag_relations').insert(
       input.tag_ids.map((tagId) => ({ indicator_id: data.id, tag_id: tagId }))
@@ -207,7 +207,7 @@ export async function updateIndicator(
   id: string,
   input: Partial<IndicatorFormInput>
 ): Promise<BackofficeIndicator | null> {
-  const supabase = await createClient();
+  const supabase = createServiceClient();
 
   const updatePayload: Record<string, unknown> = {};
   if (input.name !== undefined) updatePayload.name = input.name;
@@ -244,7 +244,7 @@ export async function updateIndicator(
 }
 
 export async function deleteIndicator(id: string): Promise<boolean> {
-  const supabase = await createClient();
+  const supabase = createServiceClient();
 
   const { error } = await supabase
     .from('backoffice_indicators')
