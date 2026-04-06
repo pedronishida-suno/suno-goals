@@ -1,15 +1,12 @@
 /**
  * OAuth callback handler for Supabase Auth (Google, etc.)
  *
- * Supabase redirects here after a successful OAuth login with ?code=...
- * We exchange the code for a session, then route the user to the right page.
+ * Critical: session cookies must be set on the SAME response object that is
+ * returned. Creating a second NextResponse at the end loses the cookies and
+ * the middleware sees no session → redirect loop to /login.
  *
- * Auto-provisioning of public.users is handled by the DB trigger
- * (migration 011 — handle_new_auth_user). This route only needs to:
- *   1. Exchange the code for a session
- *   2. Activate pending pre-registered users on first login
- *   3. Enforce approved email domain
- *   4. Route: admin → /admin/backoffice, others → /
+ * Fix: create one response at the top, set cookies on it, then update its
+ * Location header before returning — preserving the session.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
@@ -20,15 +17,15 @@ const APPROVED_DOMAINS = ['suno.com.br', 'statusinvest.com'];
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get('code');
-  const next = searchParams.get('next') ?? '/';
 
   if (!code) {
     return NextResponse.redirect(`${origin}/login?error=missing_code`);
   }
 
-  const response = NextResponse.redirect(`${origin}${next}`);
+  // Create the response that will carry session cookies.
+  // We'll update its Location later once we know the destination.
+  const response = NextResponse.redirect(`${origin}/`);
 
-  // Build Supabase SSR client with the response cookies
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -38,9 +35,12 @@ export async function GET(request: NextRequest) {
           return request.cookies.get(name)?.value;
         },
         set(name: string, value: string, options: CookieOptions) {
+          // Write to BOTH the request (for this handler) and response (for the browser)
+          request.cookies.set({ name, value, ...options });
           response.cookies.set({ name, value, ...options });
         },
         remove(name: string, options: CookieOptions) {
+          request.cookies.set({ name, value: '', ...options });
           response.cookies.set({ name, value: '', ...options });
         },
       },
@@ -57,31 +57,45 @@ export async function GET(request: NextRequest) {
   const user = data.user;
 
   // Enforce approved email domains
-  const domain = user.email?.split('@')[1] ?? '';
+  const domain = (user.email ?? '').split('@')[1] ?? '';
   if (!APPROVED_DOMAINS.includes(domain)) {
     await supabase.auth.signOut();
     return NextResponse.redirect(`${origin}/login?error=domain_not_allowed`);
   }
 
-  // Activate pending pre-registered users on first sign-in
-  // and ensure public.users row exists (trigger handles new users, but
-  // there's a small window between trigger firing and this code running)
+  // Ensure public.users row exists and is active
   const serviceClient = createServiceClient();
   const { data: publicUser } = await serviceClient
     .from('users')
-    .select('id, role, status')
+    .select('id, role, status, email')
     .eq('id', user.id)
     .maybeSingle();
 
   if (!publicUser) {
-    // Trigger may have missed it (race condition) — create the row now
-    await serviceClient.from('users').insert({
-      id:         user.id,
-      email:      user.email ?? '',
-      full_name:  user.user_metadata?.full_name ?? user.user_metadata?.name ?? (user.email?.split('@')[0] ?? ''),
-      role:       'employee',
-      status:     'active',
-    }).onConflict('id').ignore();
+    // Fallback: trigger may have missed it, or user's Google email differs from
+    // a pre-registered email. Check by email too.
+    const { data: byEmail } = await serviceClient
+      .from('users')
+      .select('id, role, status')
+      .eq('email', user.email ?? '')
+      .maybeSingle();
+
+    if (byEmail) {
+      // Pre-registered user whose auth id now differs — update the id
+      await serviceClient
+        .from('users')
+        .update({ id: user.id, status: 'active', updated_at: new Date().toISOString() })
+        .eq('email', user.email ?? '');
+    } else {
+      // Brand new user — create basic employee row
+      await serviceClient.from('users').insert({
+        id:        user.id,
+        email:     user.email ?? '',
+        full_name: user.user_metadata?.full_name ?? user.user_metadata?.name ?? (user.email ?? '').split('@')[0],
+        role:      'employee',
+        status:    'active',
+      });
+    }
   } else if (publicUser.status === 'pending') {
     // Pre-registered user logging in for the first time
     await serviceClient
@@ -90,7 +104,7 @@ export async function GET(request: NextRequest) {
       .eq('id', user.id);
   }
 
-  // Fetch final role (may have been updated above)
+  // Fetch final role for routing
   const { data: finalUser } = await serviceClient
     .from('users')
     .select('role')
@@ -100,5 +114,7 @@ export async function GET(request: NextRequest) {
   const role = finalUser?.role ?? 'employee';
   const destination = role === 'admin' ? '/admin/backoffice' : '/';
 
-  return NextResponse.redirect(`${origin}${destination}`);
+  // Update the Location on the SAME response (preserves session cookies)
+  response.headers.set('location', `${origin}${destination}`);
+  return response;
 }
