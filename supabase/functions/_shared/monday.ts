@@ -6,6 +6,7 @@ export const BOARDS = {
   INDICADORES_E_METAS: 3896178865,
   RESULTADO_BOOKS_2025: 18397693246,
   COLABORADORES: 3958295293,
+  NOVOS_BOOKS: 3954357576,
 } as const
 
 // Column IDs for INDICADORES_E_METAS board (year 2026)
@@ -70,6 +71,21 @@ export const COL_BOOKS = {
   responsible: 'multiple_person_mm02xr6h',
 } as const
 
+// Column IDs for NOVOS_BOOKS board (3954357576)
+export const COL_NOVOS_BOOKS = {
+  email:        'email',      // E-mail do Colaborador
+  statusBook:   'color8',     // Status Vigência do Book ("Criado" = active)
+  // Up to 4 indicator slots: description text + weight
+  ind1Key:      'text',       // Chave Indicador 1
+  ind1Weight:   'numeric',    // Peso Indicador 1
+  ind2Key:      'text2',      // Chave Indicador 2
+  ind2Weight:   'numeric2',   // Peso Indicador 2
+  ind3Key:      'text9',      // Chave Indicador 3
+  ind3Weight:   'numeric5',   // Peso Indicador 3
+  ind4Key:      'text8',      // Chave Indicador 4
+  ind4Weight:   'numeric4',   // Peso Indicador 4
+} as const
+
 // Column IDs for COLABORADORES board (3958295293)
 export const COL_COLABORADORES = {
   email:         'text42',   // Email do colaborador
@@ -117,7 +133,7 @@ export async function mondayGraphQL<T = unknown>(
 /** Open a sync_log row and return its id + a finisher function. */
 export async function openSyncLog(
   supabase: ReturnType<typeof makeSupabase>,
-  syncType: 'catalog' | 'indicator_data' | 'colaboradores' | 'resultado_books' | 'webhook',
+  syncType: 'catalog' | 'indicator_data' | 'colaboradores' | 'resultado_books' | 'books' | 'webhook',
   boardId: number,
   triggeredBy = 'edge-function',
   metadata: Record<string, unknown> = {},
