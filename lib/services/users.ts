@@ -147,28 +147,44 @@ export async function createUser(
 ): Promise<User | null> {
   const supabase = createServiceClient();
   const email = `${input.email_prefix}@suno.com.br`;
+  const fullName = `${input.first_name} ${input.last_name}`.trim();
 
-  // Insert into public.users (auth user creation is handled separately via Supabase invite)
-  const { data, error } = await supabase
-    .from('users')
-    .insert({
-      email,
-      full_name: `${input.first_name} ${input.last_name}`.trim(),
-      role: input.role,
-      department: input.department,
-      manager_id: input.manager_id ?? null,
-      team_id: input.team_id ?? null,
-      status: 'pending',
-    })
-    .select()
-    .single();
+  // Step A: Create auth user (no password — user will sign in via Google OAuth)
+  // Trigger on auth.users INSERT auto-creates a basic public.users row.
+  const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+    email,
+    email_confirm: true,   // mark email as verified so Google SSO links correctly
+    user_metadata: { full_name: fullName, role: input.role },
+  });
 
-  if (error || !data) {
-    console.error('[createUser]', error?.message);
+  if (authError || !authData.user) {
+    console.error('[createUser] auth user creation failed:', authError?.message);
     return null;
   }
 
-  return getUserById(data.id);
+  // Step B: Update the public.users row created by the trigger with full profile data
+  const { error: updateError } = await supabase
+    .from('users')
+    .update({
+      full_name:  fullName,
+      role:       input.role,
+      department: input.department ?? null,
+      manager_id: input.manager_id ?? null,
+      team_id:    input.team_id ?? null,
+      status:     'pending',
+      created_by: createdBy,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', authData.user.id);
+
+  if (updateError) {
+    console.error('[createUser] profile update failed:', updateError.message);
+    // Rollback auth user so DB and auth stay in sync
+    await supabase.auth.admin.deleteUser(authData.user.id);
+    return null;
+  }
+
+  return getUserById(authData.user.id);
 }
 
 export async function updateUser(
@@ -208,6 +224,28 @@ export async function deactivateUser(id: string): Promise<boolean> {
     .update({ is_active: false, status: 'inactive' })
     .eq('id', id);
   return !error;
+}
+
+/**
+ * Re-send a Google OAuth "magic link" for a pending user by generating
+ * a password reset link (works as a sign-in link for accounts without passwords).
+ * The user clicks it and is prompted to link their Google account.
+ */
+export async function resendInvite(userId: string): Promise<boolean> {
+  const supabase = createServiceClient();
+  const user = await getUserById(userId);
+  if (!user?.full_email) return false;
+
+  // Generate a recovery link so the user can sign in and link their Google account
+  const { error } = await supabase.auth.admin.generateLink({
+    type: 'recovery',
+    email: user.full_email,
+  });
+  if (error) {
+    console.error('[resendInvite]', error.message);
+    return false;
+  }
+  return true;
 }
 
 // =====================================================

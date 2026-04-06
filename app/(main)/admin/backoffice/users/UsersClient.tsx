@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, Search, Filter, X, Users as UsersIcon, User as UserIcon } from 'lucide-react';
+import { Plus, Search, Filter, X, Users as UsersIcon, User as UserIcon, Mail } from 'lucide-react';
 import { User, UserFilters, UserFormData } from '@/types/users';
 import UserFormModal from '@/components/backoffice/UserFormModal';
 import UserDrawer from '@/components/backoffice/UserDrawer';
@@ -21,6 +21,7 @@ export default function UsersClient({ initialUsers }: Props) {
   const [showUserModal, setShowUserModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [resendingInvite, setResendingInvite] = useState<string | null>(null); // userId being re-invited
 
   const handleSaveUser = async (userData: UserFormData) => {
     setShowUserModal(false);
@@ -63,6 +64,19 @@ export default function UsersClient({ initialUsers }: Props) {
     setUsers(prev => prev.filter(u => u.id !== userId));
     await fetch(`/api/users/${userId}`, { method: 'DELETE' });
     router.refresh();
+  };
+
+  const handleResendInvite = async (e: React.MouseEvent, userId: string) => {
+    e.stopPropagation(); // prevent row click from opening drawer
+    setResendingInvite(userId);
+    try {
+      const response = await fetch(`/api/users/${userId}/resend-invite`, { method: 'POST' });
+      if (!response.ok) throw new Error('Falha ao reenviar convite');
+    } catch {
+      // silently ignore — user can retry
+    } finally {
+      setResendingInvite(null);
+    }
   };
 
   const filteredUsers = users.filter(user => {
@@ -262,13 +276,25 @@ export default function UsersClient({ initialUsers }: Props) {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${
-                        user.status === 'active' ? 'bg-neutral-1 text-neutral-10' :
-                        user.status === 'pending' ? 'bg-yellow-50 text-yellow-700' :
-                        'bg-neutral-2 text-neutral-5'
-                      }`}>
-                        {user.status === 'active' ? 'Ativo' : user.status === 'pending' ? 'Pendente' : 'Inativo'}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${
+                          user.status === 'active' ? 'bg-neutral-1 text-neutral-10' :
+                          user.status === 'pending' ? 'bg-yellow-50 text-yellow-700' :
+                          'bg-neutral-2 text-neutral-5'
+                        }`}>
+                          {user.status === 'active' ? 'Ativo' : user.status === 'pending' ? 'Pendente' : 'Inativo'}
+                        </span>
+                        {user.status === 'pending' && (
+                          <button
+                            onClick={(e) => handleResendInvite(e, user.id)}
+                            disabled={resendingInvite === user.id}
+                            title="Reenviar convite"
+                            className="p-1 text-neutral-5 hover:text-suno-red transition-colors disabled:opacity-40"
+                          >
+                            <Mail className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       {user.has_individual_book ? (

@@ -42,9 +42,6 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // 🚧 DESENVOLVIMENTO: Admin auth desabilitada
-  // TODO: Habilitar em produção
-  /*
   // ── Protect /admin routes ─────────────────────────────────────────────────
   if (pathname.startsWith('/admin')) {
     if (!user) {
@@ -79,7 +76,6 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/unauthorized', request.url));
     }
   }
-  */
 
   return response;
 }
