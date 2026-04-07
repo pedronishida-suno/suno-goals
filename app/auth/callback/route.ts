@@ -7,12 +7,16 @@
  *
  * Fix: create one response at the top, set cookies on it, then update its
  * Location header before returning — preserving the session.
+ *
+ * After migration 012 the auth trigger (handle_new_auth_user) fires on
+ * auth.users INSERT and auto-links pre-synced public.users by email, so we
+ * no longer need to manually match/update IDs here.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { createServiceClient } from '@/lib/supabase/server';
 
-const APPROVED_DOMAINS = ['suno.com.br', 'statusinvest.com'];
+const APPROVED_DOMAINS = ['suno.com.br', 'statusinvest.com', 'gmail.com'];
 
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
@@ -63,53 +67,36 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${origin}/login?error=domain_not_allowed`);
   }
 
-  // Ensure public.users row exists and is active
+  // After migration 012 the auth trigger already handled:
+  //   1. Linking auth_id on a pre-synced public.users row (matched by email)
+  //   2. Creating a basic employee row if no match was found
+  // We just query by auth_id to get the role for routing.
   const serviceClient = createServiceClient();
   const { data: publicUser } = await serviceClient
     .from('users')
-    .select('id, role, status, email')
+    .select('role, status')
     .eq('id', user.id)
     .maybeSingle();
 
+  // Safety net: if somehow the trigger didn't fire (e.g. migration not applied yet),
+  // insert a basic row manually.
   if (!publicUser) {
-    // Fallback: trigger may have missed it, or user's Google email differs from
-    // a pre-registered email. Check by email too.
-    const { data: byEmail } = await serviceClient
-      .from('users')
-      .select('id, role, status')
-      .eq('email', user.email ?? '')
-      .maybeSingle();
-
-    if (byEmail) {
-      // Pre-registered user whose auth id now differs — update the id
-      await serviceClient
-        .from('users')
-        .update({ id: user.id, status: 'active', updated_at: new Date().toISOString() })
-        .eq('email', user.email ?? '');
-    } else {
-      // Brand new user — create basic employee row
-      await serviceClient.from('users').insert({
-        id:        user.id,
-        email:     user.email ?? '',
-        full_name: user.user_metadata?.full_name ?? user.user_metadata?.name ?? (user.email ?? '').split('@')[0],
-        role:      'employee',
-        status:    'active',
-      });
-    }
-  } else if (publicUser.status === 'pending') {
-    // Pre-registered user logging in for the first time
-    await serviceClient
-      .from('users')
-      .update({ status: 'active', updated_at: new Date().toISOString() })
-      .eq('id', user.id);
+    console.warn('[auth/callback] no public.users row found for id', user.id, '— inserting fallback');
+    await serviceClient.from('users').insert({
+      id:        user.id,
+      email:     user.email ?? '',
+      full_name: user.user_metadata?.full_name ?? user.user_metadata?.name ?? (user.email ?? '').split('@')[0],
+      role:      'employee',
+      status:    'active',
+    });
   }
 
-  // Fetch final role for routing
+  // Fetch final role (may have just been inserted above)
   const { data: finalUser } = await serviceClient
     .from('users')
     .select('role')
     .eq('id', user.id)
-    .single();
+    .maybeSingle();
 
   const role = finalUser?.role ?? 'employee';
   const destination = role === 'admin' ? '/admin/backoffice' : '/';

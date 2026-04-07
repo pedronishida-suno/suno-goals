@@ -162,8 +162,10 @@ export async function createUser(
     return null;
   }
 
-  // Step B: Update the public.users row created by the trigger with full profile data
-  const { error: updateError } = await supabase
+  // Step B: Update the public.users row created by the trigger with full profile data.
+  // After migration 012 the trigger sets auth_id = NEW.id (not id = NEW.id),
+  // so we must query by auth_id to find the row.
+  const { data: createdRow, error: updateError } = await supabase
     .from('users')
     .update({
       full_name:  fullName,
@@ -175,16 +177,18 @@ export async function createUser(
       created_by: createdBy,
       updated_at: new Date().toISOString(),
     })
-    .eq('id', authData.user.id);
+    .eq('auth_id', authData.user.id)
+    .select('id')
+    .single();
 
-  if (updateError) {
-    console.error('[createUser] profile update failed:', updateError.message);
+  if (updateError || !createdRow) {
+    console.error('[createUser] profile update failed:', updateError?.message);
     // Rollback auth user so DB and auth stay in sync
     await supabase.auth.admin.deleteUser(authData.user.id);
     return null;
   }
 
-  return getUserById(authData.user.id);
+  return getUserById(createdRow.id);
 }
 
 export async function updateUser(

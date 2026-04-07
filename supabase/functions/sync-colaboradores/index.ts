@@ -1,13 +1,12 @@
 /**
  * sync-colaboradores — Edge Function
- * Syncs the COLABORADORES Monday board → public.users (update only).
- * Cannot create new auth users — only updates existing rows matched by
- * monday_item_id → email → full_name.
+ * Syncs the COLABORADORES Monday board → public.users
  *
- * Fields synced per user:
- *   monday_item_id, full_name, email, is_active, status,
- *   department (área), diretoria, grade, negocio, role (from nivel),
- *   manager_id (resolved from manager_email)
+ * After migration 012 public.users.id is decoupled from auth.users.id,
+ * so we can INSERT new users directly with auth_id = null.
+ * On first Google login the auth trigger will link them by email.
+ *
+ * Also auto-creates/updates teams from the Diretoria field.
  *
  * POST https://{project}.supabase.co/functions/v1/sync-colaboradores
  */
@@ -54,17 +53,47 @@ Deno.serve(async (req: Request) => {
       if (u.full_name)      byName.set(normalize(u.full_name), u.id)
     }
 
-    // 3. Build update payloads — two passes needed:
-    //    Pass A: map each Monday item → supabase user_id + raw payload (manager_email stored)
-    //    Pass B: resolve manager_email → manager_id using the same byEmail map
+    // ── 3. Auto-create/update teams from unique Diretoria values ─────────────
+    const directoriaValues = [
+      ...new Set(mondayItems.map(i => i.diretoria).filter(Boolean) as string[]),
+    ]
 
-    type RawUpdate = {
-      userId: string
+    // Load existing teams by name
+    const { data: existingTeams } = await supabase
+      .from('teams')
+      .select('id, name, monday_diretoria')
+
+    const teamByDiretoria = new Map<string, string>() // normalized diretoria → team_id
+
+    for (const t of existingTeams ?? []) {
+      if (t.monday_diretoria) teamByDiretoria.set(normalize(t.monday_diretoria), t.id)
+      else if (t.name)        teamByDiretoria.set(normalize(t.name), t.id)
+    }
+
+    // Upsert teams that don't exist yet
+    for (const diretoria of directoriaValues) {
+      const key = normalize(diretoria)
+      if (!teamByDiretoria.has(key)) {
+        const { data: newTeam } = await supabase
+          .from('teams')
+          .insert({ name: diretoria, monday_diretoria: diretoria, department: diretoria })
+          .select('id')
+          .maybeSingle()
+        if (newTeam?.id) teamByDiretoria.set(key, newTeam.id)
+      }
+    }
+
+    // 4. Build update/insert payloads — two passes needed:
+    //    Pass A: map each Monday item → supabase user_id + raw payload
+    //    Pass B: resolve manager_email → manager_id
+
+    type RawPayload = {
+      userId: string | null   // null = new user (needs INSERT)
       data: Record<string, unknown>
       manager_email: string | null
+      isNew: boolean
     }
-    const rawUpdates: RawUpdate[] = []
-    const notInSupabase: string[] = []
+    const rawPayloads: RawPayload[] = []
     let skippedNoIdentity = 0
 
     for (const item of mondayItems) {
@@ -76,56 +105,77 @@ Deno.serve(async (req: Request) => {
         (item.email ? byEmail.get(normalize(item.email)) : undefined) ??
         byName.get(normalize(item.name))
 
-      if (!userId) {
-        if (!item.email && !item.name) {
-          skippedNoIdentity++
-        } else {
-          notInSupabase.push(item.email ? `${item.name} <${item.email}>` : item.name)
-        }
+      // Skip items with no identity info
+      if (!userId && !item.email && !item.name) {
+        skippedNoIdentity++
         continue
       }
+
+      const teamId = item.diretoria
+        ? teamByDiretoria.get(normalize(item.diretoria))
+        : undefined
 
       const data: Record<string, unknown> = {
         monday_item_id: mid,
         full_name:      item.name,
         is_active:      item.status !== 'inactive',
-        status:         item.status === 'inactive' ? 'inactive' : 'active',
+        // For updates: only set status if inactive (preserve 'active' for users already logged in).
+        // For inserts: status is explicitly set to 'pending' below.
+        ...(item.status === 'inactive' ? { status: 'inactive' } : {}),
       }
 
-      if (item.email)     data.email     = item.email
+      if (item.email)     data.email      = item.email
       if (item.area)      data.department = item.area
       if (item.diretoria) data.diretoria  = item.diretoria
       if (item.grade)     data.grade      = item.grade
       if (item.negocio)   data.negocio    = item.negocio
+      if (teamId)         data.team_id    = teamId
 
       const role = mapRole(item.nivel)
       if (role) data.role = role
 
-      rawUpdates.push({ userId, data, manager_email: item.manager_email })
+      rawPayloads.push({
+        userId:        userId ?? null,
+        data,
+        manager_email: item.manager_email,
+        isNew:         !userId,
+      })
+
+      // Register in lookup maps so managers resolved later can find this user
+      if (!userId && item.email) {
+        // We'll get the real id after INSERT; use a placeholder key
+        byEmail.set(normalize(item.email), '__pending__')
+      }
     }
 
-    // Pass B: resolve manager_id for each update
-    type FinalUpdate = { userId: string; data: Record<string, unknown> }
-    const updates: FinalUpdate[] = rawUpdates.map(({ userId, data, manager_email }) => {
+    // Pass B: resolve manager_id
+    type FinalPayload = { userId: string | null; data: Record<string, unknown>; isNew: boolean }
+    const finalPayloads: FinalPayload[] = rawPayloads.map(({ userId, data, manager_email, isNew }) => {
       if (manager_email) {
         const managerId = byEmail.get(normalize(manager_email))
-        if (managerId && managerId !== userId) {
+        if (managerId && managerId !== '__pending__' && managerId !== userId) {
           data.manager_id = managerId
         }
       }
-      return { userId, data }
+      return { userId, data, isNew }
     })
 
-    // 4. Execute updates in chunks of 100
+    // 5. Execute updates and inserts in chunks of 100
     const CHUNK = 100
     let synced = 0
+    let inserted = 0
     const dbErrors: string[] = []
 
+    // Split into updates vs inserts
+    const updates = finalPayloads.filter(p => !p.isNew && p.userId)
+    const inserts = finalPayloads.filter(p => p.isNew)
+
+    // Updates
     for (let i = 0; i < updates.length; i += CHUNK) {
       const chunk = updates.slice(i, i + CHUNK)
       const results = await Promise.allSettled(
         chunk.map(({ userId, data }) =>
-          supabase.from('users').update(data).eq('id', userId)
+          supabase.from('users').update(data).eq('id', userId!)
         ),
       )
       for (const r of results) {
@@ -138,25 +188,51 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    const finalStatus = dbErrors.length > 0 ? (synced > 0 ? 'partial' : 'error') : 'success'
+    // Inserts — new users with auth_id = null (migration 012 decoupled id from auth)
+    for (let i = 0; i < inserts.length; i += CHUNK) {
+      const chunk = inserts.slice(i, i + CHUNK)
+      const rows = chunk.map(({ data }) => ({
+        ...data,
+        auth_id: null,
+        status: 'pending',
+      }))
+
+      const { error: insertErr, count } = await supabase
+        .from('users')
+        .insert(rows, { count: 'exact' })
+
+      if (insertErr) {
+        dbErrors.push(insertErr.message)
+      } else {
+        inserted += count ?? chunk.length
+      }
+    }
+
+    const totalSynced = synced + inserted
+    const finalStatus = dbErrors.length > 0
+      ? (totalSynced > 0 ? 'partial' : 'error')
+      : 'success'
+
     await finish(
       finalStatus,
-      { fetched: mondayItems.length, synced, skipped: skippedNoIdentity },
+      { fetched: mondayItems.length, synced: totalSynced, skipped: skippedNoIdentity },
       {
-        not_in_supabase_count: notInSupabase.length,
-        not_in_supabase:       notInSupabase.slice(0, 30),
-        db_errors:             dbErrors.slice(0, 5),
+        updated:    synced,
+        inserted,
+        teams_synced: teamByDiretoria.size,
+        db_errors:  dbErrors.slice(0, 5),
       },
       dbErrors[0],
     )
 
     return Response.json({
-      success:               finalStatus !== 'error',
-      fetched:               mondayItems.length,
-      synced,
-      not_in_supabase_count: notInSupabase.length,
-      db_errors:             dbErrors,
-      log_id:                logId,
+      success:      finalStatus !== 'error',
+      fetched:      mondayItems.length,
+      updated:      synced,
+      inserted,
+      teams_synced: teamByDiretoria.size,
+      db_errors:    dbErrors,
+      log_id:       logId,
     }, { headers: corsHeaders() })
 
   } catch (err) {
@@ -175,7 +251,7 @@ interface ColaboradorItem {
   manager_email: string | null
   status:        'active' | 'inactive' | null
   area:          string | null   // Área / department
-  diretoria:     string | null   // Diretoria
+  diretoria:     string | null   // Diretoria (used for team assignment)
   grade:         string | null   // Grade
   negocio:       string | null   // Negócio / Business Unit
   nivel:         string | null   // Nível (used for role mapping)
@@ -230,7 +306,6 @@ async function fetchColaboradores(): Promise<ColaboradorItem[]> {
         val[cv.id]  = cv.value
       }
 
-      // Email columns are stored as JSON: { "email": "...", "text": "..." }
       const email         = parseEmailCol(val[COL_COLABORADORES.email],         text[COL_COLABORADORES.email])
       const manager_email = parseEmailCol(val[COL_COLABORADORES.manager_email], text[COL_COLABORADORES.manager_email])
 

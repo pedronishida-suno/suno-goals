@@ -6,6 +6,13 @@ export type MonthData = {
   percentage: number;
 };
 
+export type IndicatorTag = {
+  id: string;
+  name: string;
+  category: 'type' | 'business_unit' | 'support_area';
+  color: string;
+};
+
 export type IndicatorType = {
   id: string;
   name: string;
@@ -13,6 +20,7 @@ export type IndicatorType = {
   direction: IndicatorDirection;
   editable: boolean; // Se o usuário pode editar o "realizado"
   accumulated: MonthData;
+  tags?: IndicatorTag[];
   months: {
     jan: MonthData;
     feb: MonthData;

@@ -6,8 +6,8 @@
 import { createClient } from '@/lib/supabase/server';
 import { getBooksByOwner, getBooks } from './books';
 import { getMultipleIndicatorsData } from './indicatorData';
-import type { BookData, IndicatorType, TeamBook } from '@/types/indicator';
-import type { BookIndicatorWithGoals } from '@/types/backoffice';
+import type { BookData, IndicatorType, IndicatorTag, TeamBook } from '@/types/indicator';
+import type { BookIndicatorWithGoals, IndicatorTag as BackofficeTag } from '@/types/backoffice';
 
 const MONTH_KEYS = [
   'jan', 'feb', 'mar', 'apr', 'may', 'jun',
@@ -25,6 +25,15 @@ function formatToUnit(format: string): IndicatorType['unit'] {
     boolean: '#',
   };
   return map[format] ?? '#';
+}
+
+function mapTag(t: BackofficeTag): IndicatorTag {
+  return {
+    id: t.id,
+    name: t.name,
+    category: (t.category as IndicatorTag['category']) ?? 'type',
+    color: t.color,
+  };
 }
 
 function buildIndicatorType(
@@ -63,16 +72,17 @@ function buildIndicatorType(
     direction: bi.indicator_direction,
     editable: true, // read-only enforcement happens at API level for Category 1
     accumulated: { meta: totalMeta, real: totalReal, percentage: accPercentage },
+    tags: (bi.indicator_tags ?? []).map(mapTag),
     months,
   };
 }
 
 async function getGlobalIndicatorsData(year: number): Promise<BookData> {
   const supabase = await createClient();
+  // indicators_with_stats view includes tags as JSON array
   const { data: indicators } = await supabase
-    .from('backoffice_indicators')
-    .select('id, name, format, direction')
-    .eq('is_active', true)
+    .from('indicators_with_stats')
+    .select('id, name, format, direction, tags')
     .order('name');
 
   const rows = indicators ?? [];
@@ -80,13 +90,13 @@ async function getGlobalIndicatorsData(year: number): Promise<BookData> {
   const dataByIndicator = ids.length > 0 ? await getMultipleIndicatorsData(ids, year) : {};
 
   const syntheticBIs: BookIndicatorWithGoals[] = rows.map(
-    (ind: { id: string; name: string; format: BookIndicatorWithGoals['indicator_format']; direction: 'up' | 'down' }, idx: number) => ({
+    (ind: { id: string; name: string; format: BookIndicatorWithGoals['indicator_format']; direction: 'up' | 'down'; tags?: BackofficeTag[] }, idx: number) => ({
       id: ind.id,
       indicator_id: ind.id,
       indicator_name: ind.name,
       indicator_format: ind.format,
       indicator_direction: ind.direction,
-      indicator_tags: [],
+      indicator_tags: Array.isArray(ind.tags) ? ind.tags : [],
       display_order: idx,
       goals: {},
       has_missing_goals: false,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { upsertIndicatorData } from '@/lib/services/indicatorData';
-import { createClient } from '@/lib/supabase/server';
+import { getCurrentUser } from '@/lib/auth/utils';
 
 /**
  * POST /api/indicator-data/upsert
@@ -9,8 +9,9 @@ import { createClient } from '@/lib/supabase/server';
  * Body: { indicator_id, year, month, real?, meta? }
  */
 export async function POST(request: NextRequest) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // Use getCurrentUser to get the public.users.id (not the auth UUID).
+  // After migration 012, updated_by FK references public.users.id, not auth.users.id.
+  const user = await getCurrentUser();
 
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
