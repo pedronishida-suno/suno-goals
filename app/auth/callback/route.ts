@@ -70,20 +70,19 @@ export async function GET(request: NextRequest) {
   // After migration 012 the auth trigger already handled:
   //   1. Linking auth_id on a pre-synced public.users row (matched by email)
   //   2. Creating a basic employee row if no match was found
-  // We just query by auth_id to get the role for routing.
+  // We query by auth_id (= auth.users.id) to get the role for routing.
   const serviceClient = createServiceClient();
   const { data: publicUser } = await serviceClient
     .from('users')
     .select('role, status')
-    .eq('id', user.id)
+    .eq('auth_id', user.id)
     .maybeSingle();
 
-  // Safety net: if somehow the trigger didn't fire (e.g. migration not applied yet),
-  // insert a basic row manually.
+  // Safety net: if somehow the trigger didn't fire, insert a basic row manually.
   if (!publicUser) {
-    console.warn('[auth/callback] no public.users row found for id', user.id, '— inserting fallback');
+    console.warn('[auth/callback] no public.users row found for auth_id', user.id, '— inserting fallback');
     await serviceClient.from('users').insert({
-      id:        user.id,
+      auth_id:   user.id,
       email:     user.email ?? '',
       full_name: user.user_metadata?.full_name ?? user.user_metadata?.name ?? (user.email ?? '').split('@')[0],
       role:      'employee',
@@ -95,7 +94,7 @@ export async function GET(request: NextRequest) {
   const { data: finalUser } = await serviceClient
     .from('users')
     .select('role')
-    .eq('id', user.id)
+    .eq('auth_id', user.id)
     .maybeSingle();
 
   const role = finalUser?.role ?? 'employee';
