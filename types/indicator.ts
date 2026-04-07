@@ -13,14 +13,18 @@ export type IndicatorTag = {
   color: string;
 };
 
+export type CalculationType = 'soma' | 'media' | 'media_ponderada' | 'valor_mais_recente';
+
 export type IndicatorType = {
   id: string;
   name: string;
   unit: '%' | '#' | 'R$' | 'H$';
   direction: IndicatorDirection;
+  calculationType?: CalculationType;
   editable: boolean; // Se o usuário pode editar o "realizado"
   accumulated: MonthData;
   tags?: IndicatorTag[];
+  icpLabel?: string | null;
   months: {
     jan: MonthData;
     feb: MonthData;

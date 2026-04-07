@@ -58,7 +58,7 @@ export async function getBooks(filters?: BookFilters): Promise<BackofficeBook[]>
         custom_may, custom_jun, custom_jul, custom_aug,
         custom_sep, custom_oct, custom_nov, custom_dec,
         indicator:backoffice_indicators!indicator_id(
-          id, name, format, direction,
+          id, name, format, direction, calculation_type,
           tags:indicator_tag_relations(
             tag:indicator_tags(id, name, color, category)
           )
@@ -118,7 +118,7 @@ export async function getBookById(id: string): Promise<BackofficeBook | null> {
         custom_may, custom_jun, custom_jul, custom_aug,
         custom_sep, custom_oct, custom_nov, custom_dec,
         indicator:backoffice_indicators!indicator_id(
-          id, name, format, direction,
+          id, name, format, direction, calculation_type,
           tags:indicator_tag_relations(
             tag:indicator_tags(id, name, color, category)
           )
@@ -149,7 +149,7 @@ export async function getBooksByOwner(ownerId: string, year?: number): Promise<B
         custom_may, custom_jun, custom_jul, custom_aug,
         custom_sep, custom_oct, custom_nov, custom_dec,
         indicator:backoffice_indicators!indicator_id(
-          id, name, format, direction,
+          id, name, format, direction, calculation_type,
           tags:indicator_tag_relations(
             tag:indicator_tags(id, name, color, category)
           )
@@ -222,6 +222,7 @@ function rowToBook(row: Record<string, unknown>): BackofficeBook {
         indicator_name: (ind?.name as string) ?? '',
         indicator_format: (ind?.format as BookIndicatorWithGoals['indicator_format']) ?? 'number',
         indicator_direction: (ind?.direction as 'up' | 'down') ?? 'up',
+        indicator_calculation_type: (ind?.calculation_type as BookIndicatorWithGoals['indicator_calculation_type']) ?? 'soma',
         indicator_tags: tags,
         display_order: (bi.display_order as number) ?? 0,
         goals,

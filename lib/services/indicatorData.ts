@@ -1,4 +1,6 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server';
+import { calculateAchievement, resolveIcpLabel } from './achievement';
+import type { Polarity, IcpRange } from './achievement';
 // Note: reads (getIndicatorData, getMultipleIndicatorsData) use the user JWT client so RLS
 // SELECT policies apply.  Writes (upsertIndicatorData, bulkUpsertIndicatorData) use the
 // service-role client to bypass RLS — auth is verified at the API route level.
@@ -116,7 +118,7 @@ export async function upsertIndicatorData(input: UpsertDataInput): Promise<boole
   const userClient = await createClient();
   const { data: indicator } = await userClient
     .from('backoffice_indicators')
-    .select('data_source, category')
+    .select('data_source, category, direction')
     .eq('id', input.indicator_id)
     .single();
 
@@ -133,7 +135,7 @@ export async function upsertIndicatorData(input: UpsertDataInput): Promise<boole
   // can't target via column names. Use SELECT-then-UPDATE/INSERT instead.
   const { data: existing } = await supabase
     .from('indicator_data')
-    .select('id')
+    .select('id, meta, real')
     .eq('indicator_id', input.indicator_id)
     .eq('year', input.year)
     .eq('month', input.month)
@@ -141,7 +143,40 @@ export async function upsertIndicatorData(input: UpsertDataInput): Promise<boole
     .is('team_id', null)
     .maybeSingle();
 
-  const payload: Record<string, unknown> = { updated_by: input.updated_by };
+  // Determine final meta/real for percentage calculation
+  const finalMeta = input.meta ?? (existing ? Number(existing.meta) : null);
+  const finalReal = input.real ?? (existing ? Number(existing.real) : null);
+
+  // Calculate polarity-aware achievement percentage
+  const direction = (indicator?.direction as Polarity) ?? 'up';
+  const percentage = calculateAchievement(finalMeta, finalReal, direction);
+
+  // Resolve ICP label if ranges exist
+  let icpLabel: string | null = null;
+  if (percentage !== null) {
+    const { data: ranges } = await supabase
+      .from('icp_ranges')
+      .select('min_pct, max_pct, label')
+      .eq('indicator_id', input.indicator_id)
+      .order('sort_order');
+
+    if (ranges && ranges.length > 0) {
+      icpLabel = resolveIcpLabel(
+        percentage,
+        ranges.map((r) => ({
+          min_pct: Number(r.min_pct),
+          max_pct: r.max_pct !== null ? Number(r.max_pct) : null,
+          label: r.label,
+        }))
+      );
+    }
+  }
+
+  const payload: Record<string, unknown> = {
+    updated_by: input.updated_by,
+    percentage: percentage ?? 0,
+    icp_label: icpLabel,
+  };
   if (input.real !== undefined) payload.real = input.real;
   if (input.meta !== undefined) payload.meta = input.meta;
 

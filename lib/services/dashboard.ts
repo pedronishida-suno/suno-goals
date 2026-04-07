@@ -6,8 +6,10 @@
 import { createClient } from '@/lib/supabase/server';
 import { getBooksByOwner, getBooks } from './books';
 import { getMultipleIndicatorsData } from './indicatorData';
-import type { BookData, IndicatorType, IndicatorTag, TeamBook } from '@/types/indicator';
+import { calculateAchievement, calculateAccumulated } from './achievement';
+import type { BookData, IndicatorType, IndicatorTag, TeamBook, CalculationType } from '@/types/indicator';
 import type { BookIndicatorWithGoals, IndicatorTag as BackofficeTag } from '@/types/backoffice';
+import type { MonthValue } from './achievement';
 
 const MONTH_KEYS = [
   'jan', 'feb', 'mar', 'apr', 'may', 'jun',
@@ -38,7 +40,8 @@ function mapTag(t: BackofficeTag): IndicatorTag {
 
 function buildIndicatorType(
   bi: BookIndicatorWithGoals,
-  dataByIndicator: Record<string, { month: number; meta: number; real: number; percentage: number }[]>
+  dataByIndicator: Record<string, { month: number; meta: number; real: number; percentage: number }[]>,
+  calculationType: CalculationType = 'soma'
 ): IndicatorType {
   const data = dataByIndicator[bi.indicator_id] ?? [];
   const dataByMonth: Record<number, { meta: number; real: number; percentage: number }> = {};
@@ -46,9 +49,11 @@ function buildIndicatorType(
     dataByMonth[d.month] = { meta: d.meta, real: d.real, percentage: d.percentage };
   }
 
+  const direction = bi.indicator_direction;
   const months = {} as IndicatorType['months'];
-  let totalMeta = 0;
-  let totalReal = 0;
+
+  // Build MonthValue array for accumulated calculation
+  const monthValues: MonthValue[] = [];
 
   MONTH_KEYS.forEach((key: MonthKey, idx: number) => {
     const monthNum = idx + 1;
@@ -57,21 +62,33 @@ function buildIndicatorType(
     const goalMeta = bi.goals[key];
     const meta = goalMeta !== undefined ? goalMeta : (d?.meta ?? 0);
     const real = d?.real ?? 0;
-    const percentage = meta === 0 ? 0 : Math.round((real / meta) * 100);
+
+    // Polarity-aware achievement calculation
+    const percentage = calculateAchievement(meta, real, direction) ?? 0;
+
     months[key] = { meta, real, percentage };
-    totalMeta += meta;
-    totalReal += real;
+    monthValues.push({
+      month: monthNum,
+      target_value: meta || null,
+      actual_value: real || null,
+    });
   });
 
-  const accPercentage = totalMeta === 0 ? 0 : Math.round((totalReal / totalMeta) * 100);
+  // Accumulated calculation using correct strategy (soma/media/media_ponderada/valor_mais_recente)
+  const currentMonth = new Date().getMonth() + 1; // 1-12
+  const accumulated = calculateAccumulated(monthValues, calculationType, currentMonth);
+  const accMeta = accumulated.target ?? 0;
+  const accReal = accumulated.actual ?? 0;
+  const accPercentage = calculateAchievement(accMeta, accReal, direction) ?? 0;
 
   return {
     id: bi.indicator_id,
     name: bi.indicator_name,
     unit: formatToUnit(bi.indicator_format),
     direction: bi.indicator_direction,
+    calculationType,
     editable: true, // read-only enforcement happens at API level for Category 1
-    accumulated: { meta: totalMeta, real: totalReal, percentage: accPercentage },
+    accumulated: { meta: accMeta, real: accReal, percentage: accPercentage },
     tags: (bi.indicator_tags ?? []).map(mapTag),
     months,
   };
@@ -82,7 +99,7 @@ async function getGlobalIndicatorsData(year: number): Promise<BookData> {
   // indicators_with_stats view includes tags as JSON array
   const { data: indicators } = await supabase
     .from('indicators_with_stats')
-    .select('id, name, format, direction, tags')
+    .select('id, name, format, direction, calculation_type, tags')
     .order('name');
 
   const rows = indicators ?? [];
@@ -90,12 +107,13 @@ async function getGlobalIndicatorsData(year: number): Promise<BookData> {
   const dataByIndicator = ids.length > 0 ? await getMultipleIndicatorsData(ids, year) : {};
 
   const syntheticBIs: BookIndicatorWithGoals[] = rows.map(
-    (ind: { id: string; name: string; format: BookIndicatorWithGoals['indicator_format']; direction: 'up' | 'down'; tags?: BackofficeTag[] }, idx: number) => ({
+    (ind: { id: string; name: string; format: BookIndicatorWithGoals['indicator_format']; direction: 'up' | 'down'; calculation_type?: string; tags?: BackofficeTag[] }, idx: number) => ({
       id: ind.id,
       indicator_id: ind.id,
       indicator_name: ind.name,
       indicator_format: ind.format,
       indicator_direction: ind.direction,
+      indicator_calculation_type: (ind.calculation_type as BookIndicatorWithGoals['indicator_calculation_type']) ?? 'soma',
       indicator_tags: Array.isArray(ind.tags) ? ind.tags : [],
       display_order: idx,
       goals: {},
@@ -106,7 +124,7 @@ async function getGlobalIndicatorsData(year: number): Promise<BookData> {
 
   return {
     indicators: syntheticBIs.map((bi) => ({
-      ...buildIndicatorType(bi, dataByIndicator),
+      ...buildIndicatorType(bi, dataByIndicator, bi.indicator_calculation_type ?? 'soma'),
       editable: false,
     })),
   };
@@ -137,7 +155,7 @@ export async function getDashboardData(
 
   const myBookData: BookData =
     myBook
-      ? { indicators: myBook.indicators.map((bi) => buildIndicatorType(bi, dataByIndicator)) }
+      ? { indicators: myBook.indicators.map((bi) => buildIndicatorType(bi, dataByIndicator, bi.indicator_calculation_type ?? 'soma')) }
       : await getGlobalIndicatorsData(year);
 
   const teamBooks: TeamBook[] = teamBooksRaw.map((book) => ({
@@ -150,7 +168,7 @@ export async function getDashboardData(
     },
     lastUpdate: book.updated_at,
     data: {
-      indicators: book.indicators.map((bi) => buildIndicatorType(bi, dataByIndicator)),
+      indicators: book.indicators.map((bi) => buildIndicatorType(bi, dataByIndicator, bi.indicator_calculation_type ?? 'soma')),
     },
   }));
 

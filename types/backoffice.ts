@@ -8,6 +8,8 @@ export type IndicatorFormat = 'percentage' | 'number' | 'currency' | 'boolean' |
 
 export type IndicatorAggregationType = 'none' | 'average' | 'sum' | 'count';
 
+export type CalculationType = 'soma' | 'media' | 'media_ponderada' | 'valor_mais_recente';
+
 export type IndicatorTagCategory = 'type' | 'business_unit' | 'support_area';
 
 export type IndicatorTag = {
@@ -70,6 +72,7 @@ export type BackofficeIndicator = {
   direction: 'up' | 'down';
   status: IndicatorStatus;
   aggregation_type: IndicatorAggregationType;
+  calculation_type?: CalculationType;
   aggregated_indicators?: string[]; // IDs dos indicadores agregados
   tags: IndicatorTag[];
   created_by: string;
@@ -123,6 +126,7 @@ export type BookIndicatorWithGoals = {
   indicator_name: string;
   indicator_format: IndicatorFormat;
   indicator_direction: 'up' | 'down';
+  indicator_calculation_type?: CalculationType;
   indicator_tags: IndicatorTag[];
   display_order: number;
   goals: MonthlyGoals;
